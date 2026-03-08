@@ -164,4 +164,5 @@ const actualAi = new ActualAiService(
   notesMigrator,
 );
 
+export { transactionProcessor };
 export default actualAi;

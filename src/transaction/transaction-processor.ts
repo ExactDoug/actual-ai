@@ -6,9 +6,13 @@ import { APIPayeeEntity } from '@actual-app/api/@types/loot-core/src/server/api-
 import {
   ActualApiServiceI, APICategoryEntity, APICategoryGroupEntity,
   LlmServiceI, ProcessingStrategyI,
-  PromptGeneratorI,
+  PromptGeneratorI, UnifiedResponse,
 } from '../types';
 import TagService from './tag-service';
+
+export interface ClassificationCallback {
+  (transaction: TransactionEntity, response: UnifiedResponse, categories: (APICategoryEntity | APICategoryGroupEntity)[]): void;
+}
 
 class TransactionProcessor {
   private readonly actualApiService: ActualApiServiceI;
@@ -20,6 +24,8 @@ class TransactionProcessor {
   private readonly tagService: TagService;
 
   private readonly processingStrategies: ProcessingStrategyI[];
+
+  private onClassified?: ClassificationCallback;
 
   constructor(
     actualApiClient: ActualApiServiceI,
@@ -33,6 +39,10 @@ class TransactionProcessor {
     this.promptGenerator = promptGenerator;
     this.tagService = tagService;
     this.processingStrategies = processingStrategies;
+  }
+
+  public setOnClassified(cb: ClassificationCallback): void {
+    this.onClassified = cb;
   }
 
   public async process(
@@ -58,6 +68,10 @@ class TransactionProcessor {
       );
 
       const response = await this.llmService.ask(prompt);
+
+      if (this.onClassified) {
+        this.onClassified(transaction, response, categories);
+      }
 
       const strategy = this.processingStrategies.find((s) => s.isSatisfiedBy(response));
       if (strategy) {
