@@ -8,7 +8,7 @@ import {
   guessedTag, notGuessedTag,
 } from './src/config';
 import actualAi from './src/container';
-import { transactionProcessor as txProcessor } from './src/container';
+import { transactionProcessor as txProcessor, receiptFetchService } from './src/container';
 import ClassificationStore from './src/web/classification-store';
 import { createWebServer } from './src/web/server';
 import type { UnifiedResponse, APICategoryEntity, APICategoryGroupEntity } from './src/types';
@@ -73,6 +73,19 @@ txProcessor.setOnClassified(
 // Classification runner
 async function runClassification() {
   currentRunId = crypto.randomUUID();
+
+  // Fetch receipts before classification when receipt matching is enabled
+  if (isFeatureEnabled('receiptMatching')) {
+    try {
+      const result = await receiptFetchService.fetchAll();
+      if (result.errors.length > 0) {
+        console.warn(`Receipt fetch completed with ${result.errors.length} error(s)`);
+      }
+    } catch (err) {
+      console.error('Receipt fetch failed (continuing with classification):', err);
+    }
+  }
+
   await actualAi.classify();
 }
 

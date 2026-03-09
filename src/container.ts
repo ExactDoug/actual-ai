@@ -35,8 +35,13 @@ import {
   openrouterTitle,
   password,
   promptTemplate,
+  receiptConnectors,
+  receiptFetchDaysBack,
   serverURL,
   valueSerpApiKey,
+  veryfiUsername,
+  veryfiPassword,
+  veryfiTotpSecret,
 } from './config';
 import ActualAiService from './actual-ai';
 import PromptGenerator from './prompt-generator';
@@ -54,6 +59,10 @@ import BatchTransactionProcessor from './transaction/batch-transaction-processor
 import TransactionProcessor from './transaction/transaction-processor';
 import TransactionFilterer from './transaction/transaction-filterer';
 import RateLimiter from './utils/rate-limiter';
+import ReceiptStore from './receipt/receipt-store';
+import ConnectorRegistry from './receipt/connector-registry';
+import VeryfiAdapter from './receipt/veryfi-adapter';
+import ReceiptFetchService from './receipt/receipt-fetch-service';
 
 // Create tool service if API key is available and tools are enabled
 export function createToolService(): ToolService | undefined {
@@ -164,5 +173,19 @@ const actualAi = new ActualAiService(
   notesMigrator,
 );
 
-export { transactionProcessor };
+// Receipt integration
+const receiptStore = new ReceiptStore(dataDir);
+const connectorRegistry = new ConnectorRegistry();
+
+if (receiptConnectors.includes('veryfi') && veryfiUsername && veryfiTotpSecret) {
+  connectorRegistry.register(new VeryfiAdapter(veryfiUsername, veryfiPassword, veryfiTotpSecret));
+}
+
+const receiptFetchService = new ReceiptFetchService(
+  connectorRegistry,
+  receiptStore,
+  receiptFetchDaysBack,
+);
+
+export { transactionProcessor, receiptStore, connectorRegistry, receiptFetchService };
 export default actualAi;

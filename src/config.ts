@@ -40,6 +40,17 @@ export const groqApiKey = process.env.GROQ_API_KEY ?? '';
 export const groqModel = process.env.GROQ_MODEL ?? 'llama-3.3-70b-versatile';
 export const groqBaseURL = process.env.GROQ_BASE_URL ?? 'https://api.groq.com/openai/v1';
 export const valueSerpApiKey = process.env.VALUESERP_API_KEY ?? '';
+
+// Receipt integration
+export const receiptConnectors = (process.env.RECEIPT_CONNECTORS ?? '').split(',').map((s) => s.trim()).filter(Boolean);
+export const veryfiUsername = process.env.VERYFI_USERNAME ?? '';
+export const veryfiPassword = process.env.VERYFI_PASSWORD ?? '';
+export const veryfiTotpSecret = process.env.VERYFI_TOTP_SECRET ?? '';
+export const receiptMatchToleranceCents = Number.parseInt(process.env.RECEIPT_MATCH_TOLERANCE_CENTS ?? '5', 10);
+export const receiptDateToleranceDays = Number.parseInt(process.env.RECEIPT_DATE_TOLERANCE_DAYS ?? '1', 10);
+export const receiptAutoMatch = process.env.RECEIPT_AUTO_MATCH !== 'false';
+export const receiptFetchDaysBack = Number.parseInt(process.env.RECEIPT_FETCH_DAYS_BACK ?? '30', 10);
+export const receiptTag = process.env.RECEIPT_TAG ?? '#actual-ai-receipt';
 export interface FeatureFlag {
   enabled: boolean;
   defaultValue: boolean;
@@ -142,8 +153,42 @@ function registerToolFeatures() {
   // };
 }
 
+function registerReceiptFeatures() {
+  features.receiptMatching = {
+    enabled: enabledFeatures.includes('receiptMatching'),
+    defaultValue: false,
+    description: 'Enable the receipt matching pipeline',
+  };
+
+  features.lineItemClassification = {
+    enabled: enabledFeatures.includes('lineItemClassification'),
+    defaultValue: false,
+    description: 'Enable per-line-item classification (requires receiptMatching)',
+  };
+
+  features.autoSplitTransactions = {
+    enabled: enabledFeatures.includes('autoSplitTransactions'),
+    defaultValue: false,
+    description: 'Auto-apply exact-match receipt splits without review',
+  };
+}
+
+function validateFeatureDependencies() {
+  if (features.lineItemClassification.enabled && !features.receiptMatching.enabled) {
+    console.warn('lineItemClassification requires receiptMatching — disabling lineItemClassification');
+    features.lineItemClassification.enabled = false;
+  }
+  if (features.autoSplitTransactions.enabled
+    && (!features.receiptMatching.enabled || !features.lineItemClassification.enabled)) {
+    console.warn('autoSplitTransactions requires receiptMatching + lineItemClassification — disabling autoSplitTransactions');
+    features.autoSplitTransactions.enabled = false;
+  }
+}
+
 registerStandardFeatures();
 registerToolFeatures();
+registerReceiptFeatures();
+validateFeatureDependencies();
 
 export function isFeatureEnabled(featureName: string): boolean {
   return features[featureName]?.enabled ?? features[featureName]?.defaultValue ?? false;
