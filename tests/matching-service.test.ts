@@ -271,6 +271,54 @@ describe('MatchingService', () => {
       expect(summary.exact).toBe(1);
     });
 
+    it('should handle YYYYMMDD integer dates from Actual Budget', () => {
+      insertReceipt(store, {
+        totalAmount: 864,
+        date: '2025-11-06',
+        vendorName: "Arby's",
+      });
+
+      const service = new MatchingService(store, 5, 1, true);
+      const summary = service.matchAll([
+        { id: 'tx-1', amount: -864, date: 20251106, payee: 'Arbys 1569 - Farmington Nm' },
+      ]);
+
+      // date: 20251106 → 2025-11-06 (same day), vendor: "arbys" in "arbys 1569..."
+      expect(summary.exact).toBe(1);
+    });
+
+    it('should strip apostrophes and punctuation for vendor matching', () => {
+      insertReceipt(store, {
+        totalAmount: 6490,
+        date: '2025-04-08',
+        vendorName: "Dick's Sporting Goods",
+      });
+
+      const service = new MatchingService(store, 5, 1, true);
+      const summary = service.matchAll([
+        { id: 'tx-1', amount: -6490, date: '2025-04-08', payee: 'DICKS SPORTING GOODS12 - FARMINGTON NM' },
+      ]);
+
+      // "dicks sporting goods" is in "dicks sporting goods12 farmington nm"
+      expect(summary.exact).toBe(1);
+    });
+
+    it('should return Infinity for unparseable dates (no false matches)', () => {
+      insertReceipt(store, {
+        totalAmount: 500,
+        date: '2025-01-15',
+        vendorName: 'Store',
+      });
+
+      const service = new MatchingService(store, 5, 1, true);
+      const summary = service.matchAll([
+        { id: 'tx-1', amount: -500, date: 'invalid-date', payee: 'Store' },
+      ]);
+
+      // Date is unparseable → Infinity days → date signal fails → probable (amount + vendor)
+      expect(summary.probable).toBe(1);
+    });
+
     it('should record match history', () => {
       const receiptId = insertReceipt(store, { totalAmount: 1000 });
 

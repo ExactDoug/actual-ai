@@ -104,13 +104,19 @@ async function runClassification() {
             await tempApi.getTransactions(account.id, '1990-01-01', '2030-01-01'),
           );
         }
+        // Build payee ID → name lookup
+        const payees = await tempApi.getPayees();
+        const payeeMap = new Map<string, string>();
+        for (const p of payees) {
+          if (p.id && p.name) payeeMap.set(p.id, p.name);
+        }
         // Match receipts against transactions that lack a category
         const uncategorized = transactions.filter((t) => !t.category && !t.is_parent && t.amount !== 0);
         matchingService.matchAll(uncategorized.map((t) => ({
           id: t.id,
           amount: t.amount,
           date: t.date,
-          payee: (t as unknown as { payee_name?: string }).payee_name,
+          payee: t.payee ? payeeMap.get(t.payee) : undefined,
           imported_payee: t.imported_payee ?? undefined,
         })));
       } finally {

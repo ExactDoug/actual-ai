@@ -4,7 +4,7 @@ import { MatchConfidence } from './types';
 interface Transaction {
   id: string;
   amount: number;
-  date: string;
+  date: string | number;
   payee?: string;
   imported_payee?: string;
 }
@@ -26,15 +26,34 @@ interface CandidateMatch {
 
 const VENDOR_SUFFIXES = /\b(inc|llc|corp|corporation|incorporated|ltd|limited|co|company)\b\.?/gi;
 
-function daysBetween(dateA: string, dateB: string): number {
-  const a = new Date(dateA + 'T00:00:00Z');
-  const b = new Date(dateB + 'T00:00:00Z');
+/**
+ * Parse a date that may be YYYY-MM-DD string or YYYYMMDD integer
+ * (Actual Budget stores dates as integers like 20251106).
+ */
+function parseDate(date: string | number): Date {
+  const s = String(date);
+  if (/^\d{8}$/.test(s)) {
+    // YYYYMMDD integer format → insert hyphens
+    return new Date(`${s.slice(0, 4)}-${s.slice(4, 6)}-${s.slice(6, 8)}T00:00:00Z`);
+  }
+  return new Date(s + 'T00:00:00Z');
+}
+
+function daysBetween(dateA: string | number, dateB: string | number): number {
+  const a = parseDate(dateA);
+  const b = parseDate(dateB);
+  if (isNaN(a.getTime()) || isNaN(b.getTime())) return Infinity;
   const diffMs = Math.abs(a.getTime() - b.getTime());
   return Math.round(diffMs / (1000 * 60 * 60 * 24));
 }
 
 function normalizeVendor(name: string): string {
-  return name.replace(VENDOR_SUFFIXES, '').trim().toLowerCase();
+  return name
+    .replace(VENDOR_SUFFIXES, '')
+    .replace(/[^a-zA-Z0-9\s]/g, '')  // strip punctuation (apostrophes, #, etc.)
+    .replace(/\s+/g, ' ')
+    .trim()
+    .toLowerCase();
 }
 
 function vendorMatch(
