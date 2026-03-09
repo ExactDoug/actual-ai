@@ -22,6 +22,11 @@ const USER_AGENT = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) '
 
 const BASE32_CHARS = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ234567';
 
+/** Last TOTP counter value that was consumed by a successful auth.
+ *  Veryfi rejects reused TOTP codes, so we must wait for the next
+ *  30-second window before retrying auth (e.g. auto-reauth on 401). */
+let lastConsumedTotpCounter = 0;
+
 function base32Decode(encoded: string): Buffer {
   const cleaned = encoded.replace(/[=\s]/g, '').toUpperCase();
   let bits = '';
@@ -37,9 +42,13 @@ function base32Decode(encoded: string): Buffer {
   return Buffer.from(bytes);
 }
 
+function currentTotpCounter(interval = 30): number {
+  return Math.floor(Date.now() / 1000 / interval);
+}
+
 function generateTOTP(secret: string, interval = 30, digits = 6): string {
   const key = base32Decode(secret);
-  const counter = Math.floor(Date.now() / 1000 / interval);
+  const counter = currentTotpCounter(interval);
 
   // counter as 8-byte big-endian
   const counterBuf = Buffer.alloc(8);
@@ -61,6 +70,24 @@ function generateTOTP(secret: string, interval = 30, digits = 6): string {
 /** Seconds remaining in the current TOTP window. */
 function totpRemaining(interval = 30): number {
   return interval - (Math.floor(Date.now() / 1000) % interval);
+}
+
+/** Wait until a fresh TOTP window that hasn't been consumed.
+ *  Ensures we never reuse a TOTP code (Veryfi rejects replays). */
+async function waitForFreshTotp(interval = 30, minRemaining = 12): Promise<void> {
+  // If current counter matches last consumed, wait for next window
+  if (currentTotpCounter(interval) <= lastConsumedTotpCounter) {
+    const remaining = totpRemaining(interval);
+    const waitMs = (remaining + 1 + Math.random() * 2) * 1000;
+    await delay(waitMs);
+  }
+
+  // Also wait if not enough time left in current window
+  const remaining = totpRemaining(interval);
+  if (remaining < minRemaining) {
+    const waitMs = (remaining + 1 + Math.random() * 2) * 1000;
+    await delay(waitMs);
+  }
 }
 
 // ── Cookie jar (minimal, single-domain) ─────────────────────────────
@@ -178,12 +205,8 @@ export async function authenticate(
   const requestId = extractMeta(html3, 'request-id');
 
   // Step 4: POST MFA with TOTP code
-  // Wait for a fresh TOTP window if less than 12 seconds remaining
-  const remaining = totpRemaining();
-  if (remaining < 12) {
-    const waitMs = (remaining + 1 + Math.random() * 2) * 1000;
-    await delay(waitMs);
-  }
+  // Wait for a fresh, unused TOTP window (Veryfi rejects replayed codes)
+  await waitForFreshTotp();
   await humanDelay(1000, 2000);
 
   const code = generateTOTP(totpSecret);
@@ -208,8 +231,14 @@ export async function authenticate(
   jar.capture(r4);
   const mfaResp = await r4.json() as Record<string, unknown>;
   if (!mfaResp.success) {
+    // Mark this counter as consumed even on failure — Veryfi may have
+    // recorded it, and reusing it will definitely fail.
+    lastConsumedTotpCounter = currentTotpCounter();
     throw new Error(`MFA failed: ${mfaResp.error_message ?? JSON.stringify(mfaResp)}`);
   }
+  // Mark the TOTP counter as consumed so subsequent auth attempts
+  // (e.g. auto-reauth on 401) wait for the next window.
+  lastConsumedTotpCounter = currentTotpCounter();
 
   // Step 5: GET dashboard → extract client-id + veryfi-session from IQBOXY JS
   await humanDelay(500, 2000);
