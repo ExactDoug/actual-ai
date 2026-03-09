@@ -42,6 +42,7 @@ class ReceiptStore {
         matchConfidence TEXT NOT NULL,
         matchedAt TEXT NOT NULL,
         status TEXT DEFAULT 'pending',
+        overridesExisting INTEGER DEFAULT 0,
         preSplitSnapshot TEXT,
         UNIQUE(transactionId, receiptId)
       );
@@ -94,6 +95,7 @@ class ReceiptStore {
         rm.receiptId,
         rm.status AS matchStatus,
         rm.matchConfidence,
+        rm.overridesExisting,
         r.vendorName,
         r.totalAmount,
         r.date AS receiptDate,
@@ -228,13 +230,13 @@ class ReceiptStore {
   // Matches
   // ---------------------------------------------------------------------------
 
-  createMatch(transactionId: string, receiptId: string, confidence: string): string {
+  createMatch(transactionId: string, receiptId: string, confidence: string, overridesExisting = false): string {
     const id = crypto.randomUUID();
     const now = new Date().toISOString();
     this.db.prepare(`
-      INSERT INTO receipt_matches (id, transactionId, receiptId, matchConfidence, matchedAt, status)
-      VALUES (?, ?, ?, ?, ?, 'pending')
-    `).run(id, transactionId, receiptId, confidence, now);
+      INSERT INTO receipt_matches (id, transactionId, receiptId, matchConfidence, matchedAt, status, overridesExisting)
+      VALUES (?, ?, ?, ?, ?, 'pending', ?)
+    `).run(id, transactionId, receiptId, confidence, now, overridesExisting ? 1 : 0);
     return id;
   }
 

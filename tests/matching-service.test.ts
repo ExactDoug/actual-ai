@@ -319,6 +319,40 @@ describe('MatchingService', () => {
       expect(summary.probable).toBe(1);
     });
 
+    it('should flag matches to already-categorized transactions as overridesExisting', () => {
+      insertReceipt(store, {
+        totalAmount: 1500,
+        date: '2025-01-15',
+        vendorName: 'Target',
+      });
+
+      const service = new MatchingService(store, 5, 1, true);
+      service.matchAll([
+        { id: 'tx-1', amount: -1500, date: '2025-01-15', payee: 'Target', hasCategory: true },
+      ]);
+
+      const match = store.getMatchForTransaction('tx-1');
+      expect(match).not.toBeNull();
+      expect(match!.overridesExisting).toBe(1);
+    });
+
+    it('should not flag matches to uncategorized transactions as overridesExisting', () => {
+      insertReceipt(store, {
+        totalAmount: 1500,
+        date: '2025-01-15',
+        vendorName: 'Target',
+      });
+
+      const service = new MatchingService(store, 5, 1, true);
+      service.matchAll([
+        { id: 'tx-1', amount: -1500, date: '2025-01-15', payee: 'Target', hasCategory: false },
+      ]);
+
+      const match = store.getMatchForTransaction('tx-1');
+      expect(match).not.toBeNull();
+      expect(match!.overridesExisting).toBe(0);
+    });
+
     it('should record match history', () => {
       const receiptId = insertReceipt(store, { totalAmount: 1000 });
 

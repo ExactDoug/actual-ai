@@ -7,6 +7,7 @@ interface Transaction {
   date: string | number;
   payee?: string;
   imported_payee?: string;
+  hasCategory?: boolean;
 }
 
 interface MatchSummary {
@@ -22,6 +23,7 @@ interface CandidateMatch {
   receiptId: string;
   confidence: MatchConfidence;
   amountDiff: number;
+  overridesExisting: boolean;
 }
 
 const VENDOR_SUFFIXES = /\b(inc|llc|corp|corporation|incorporated|ltd|limited|co|company)\b\.?/gi;
@@ -158,6 +160,7 @@ class MatchingService {
           receiptId,
           confidence,
           amountDiff,
+          overridesExisting: !!tx.hasCategory,
         });
       }
 
@@ -221,7 +224,7 @@ class MatchingService {
     };
 
     for (const [, { candidate }] of claimedTransactions) {
-      this.store.createMatch(candidate.transactionId, candidate.receiptId, candidate.confidence);
+      this.store.createMatch(candidate.transactionId, candidate.receiptId, candidate.confidence, candidate.overridesExisting);
 
       this.store.insertMatchHistory({
         receiptId: candidate.receiptId,

@@ -110,14 +110,17 @@ async function runClassification() {
         for (const p of payees) {
           if (p.id && p.name) payeeMap.set(p.id, p.name);
         }
-        // Match receipts against transactions that lack a category
-        const uncategorized = transactions.filter((t) => !t.category && !t.is_parent && t.amount !== 0);
-        matchingService.matchAll(uncategorized.map((t) => ({
+        // Match receipts against all non-split transactions (including already-categorized ones).
+        // Matches to already-categorized transactions are flagged as overridesExisting
+        // and require explicit user approval before applying.
+        const matchable = transactions.filter((t) => !t.is_parent && t.amount !== 0);
+        matchingService.matchAll(matchable.map((t) => ({
           id: t.id,
           amount: t.amount,
           date: t.date,
           payee: t.payee ? payeeMap.get(t.payee) : undefined,
           imported_payee: t.imported_payee ?? undefined,
+          hasCategory: !!t.category,
         })));
       } finally {
         await tempApi.shutdown();
