@@ -40,6 +40,7 @@ import {
   receiptDateToleranceDays,
   receiptFetchDaysBack,
   receiptMatchToleranceCents,
+  receiptTag,
   serverURL,
   valueSerpApiKey,
   veryfiUsername,
@@ -67,6 +68,8 @@ import ConnectorRegistry from './receipt/connector-registry';
 import VeryfiAdapter from './receipt/veryfi-adapter';
 import ReceiptFetchService from './receipt/receipt-fetch-service';
 import MatchingService from './receipt/matching-service';
+import LineItemClassifier from './receipt/line-item-classifier';
+import SplitTransactionService from './receipt/split-transaction-service';
 
 // Create tool service if API key is available and tools are enabled
 export function createToolService(): ToolService | undefined {
@@ -198,11 +201,26 @@ const matchingService = new MatchingService(
   receiptAutoMatch,
 );
 
+const lineItemClassifier = new LineItemClassifier(
+  llmService,
+  promptGenerator,
+  receiptStore,
+  receiptTag,
+);
+
+const splitTransactionService = new SplitTransactionService(
+  actualApiService,
+  receiptStore,
+  receiptTag,
+);
+
 export {
   transactionProcessor,
   receiptStore,
   connectorRegistry,
   receiptFetchService,
   matchingService,
+  lineItemClassifier,
+  splitTransactionService,
 };
 export default actualAi;

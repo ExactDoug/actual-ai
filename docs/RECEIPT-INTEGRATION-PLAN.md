@@ -272,12 +272,12 @@ After matching (Phase 2), for each matched receipt with status `pending`:
 
 ### 3.6 — Deliverables & Verification
 
-- [ ] Line-item prompt generates valid LLM request
-- [ ] Tax allocation produces correct amounts (test with spec's Walmart example)
-- [ ] Rounding adjustment works (remainder applied to largest item)
-- [ ] Fallback chain: low confidence → web search → whole-tx → majority → null
-- [ ] 0-line-item receipts skip classification
-- [ ] Classifications stored in SQLite with correct amounts
+- [x] Line-item prompt generates valid LLM request
+- [x] Tax allocation produces correct amounts (test with spec's Walmart example)
+- [x] Rounding adjustment works (remainder applied to largest item)
+- [x] Fallback chain: low confidence → web search → whole-tx → majority → null
+- [x] 0-line-item receipts skip classification
+- [x] Classifications stored in SQLite with correct amounts
 
 ---
 
@@ -335,12 +335,12 @@ Converts classified line items + tax allocation into a `SplitPlan`:
 
 ### 4.5 — Deliverables & Verification
 
-- [ ] Split creation produces correct subtransactions in Actual Budget
+- [x] Split creation produces correct subtransactions in Actual Budget
 - [ ] Transaction ID behavior documented and handled (preserved or remapped)
-- [ ] `RECEIPT_TAG` appended on split, removed on rollback
-- [ ] Pre-split snapshot stores complete transaction state
-- [ ] Rollback restores original transaction accurately
-- [ ] Already-split and reconciled transactions rejected
+- [x] `RECEIPT_TAG` appended on split, removed on rollback
+- [x] Pre-split snapshot stores complete transaction state
+- [x] Rollback restores original transaction accurately
+- [x] Already-split and reconciled transactions rejected
 
 ---
 
@@ -396,14 +396,14 @@ Batch:
 
 ### 5.4 — Deliverables & Verification
 
-- [ ] All API endpoints return correct data
+- [x] All API endpoints return correct data
 - [ ] Receipt detail view renders line items and tax breakdown
 - [ ] Split preview shows accurate amounts
-- [ ] Manual match workflow: select unmatched receipt + transaction → create match
-- [ ] Unmatch rolls back applied splits correctly
-- [ ] Rematch workflow: unmatch old → match new → re-classify
+- [x] Manual match workflow: select unmatched receipt + transaction → create match
+- [x] Unmatch rolls back applied splits correctly
+- [x] Rematch workflow: unmatch old → match new → re-classify
 - [ ] Image URL 401/403 shows placeholder with re-fetch option
-- [ ] Match history audit trail visible
+- [x] Match history audit trail visible
 
 ---
 

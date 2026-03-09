@@ -15,6 +15,12 @@ export interface WebServerDeps {
   getConfig: () => Record<string, unknown>;
   receiptStore?: ReceiptStore;
   connectorRegistry?: ConnectorRegistry;
+  onReceiptFetch?: () => Promise<{ fetched: number; errors: Array<{ provider: string; message: string }> }>;
+  onReceiptClassify?: (matchId: string) => Promise<void>;
+  onReceiptApplySplit?: (matchId: string) => Promise<void>;
+  onReceiptUnmatch?: (matchId: string) => void;
+  onReceiptRematch?: (matchId: string, newTransactionId: string) => string;
+  onReceiptRollback?: (matchId: string) => Promise<void>;
 }
 
 export function createWebServer(deps: WebServerDeps): express.Express {
@@ -211,6 +217,154 @@ export function createWebServer(deps: WebServerDeps): express.Express {
 
     app.get('/api/receipt-stats', (_req: Request, res: Response) => {
       res.json(receiptStore.getStats());
+    });
+
+    // Write endpoints for receipt operations
+    app.post('/api/receipts/fetch', async (_req: Request, res: Response) => {
+      if (!deps.onReceiptFetch) {
+        res.status(501).json({ error: 'Receipt fetch not configured' });
+        return;
+      }
+      try {
+        const result = await deps.onReceiptFetch();
+        res.json(result);
+      } catch (error) {
+        console.error('Error fetching receipts:', error);
+        res.status(500).json({ error: 'Failed to fetch receipts' });
+      }
+    });
+
+    app.post('/api/receipts/:id/match', (req: Request, res: Response) => {
+      const { transactionId } = req.body as { transactionId?: string };
+      if (!transactionId) {
+        res.status(400).json({ error: 'transactionId is required' });
+        return;
+      }
+      try {
+        const matchId = receiptStore.createMatch(transactionId, req.params.id as string, 'manual');
+        receiptStore.insertMatchHistory({
+          receiptId: req.params.id as string,
+          newTransactionId: transactionId,
+          action: 'match',
+          newMatchConfidence: 'manual',
+          performedBy: 'user',
+        });
+        res.json({ matchId });
+      } catch (error) {
+        console.error('Error creating match:', error);
+        res.status(500).json({ error: 'Failed to create match' });
+      }
+    });
+
+    app.get('/api/receipts/:id/splits', (req: Request, res: Response) => {
+      const match = receiptStore.getMatchForReceipt(req.params.id as string);
+      if (!match) {
+        res.status(404).json({ error: 'No match found for this receipt' });
+        return;
+      }
+      const classifications = receiptStore.getClassificationsForMatch(match.id as string);
+      res.json({ match, classifications });
+    });
+
+    app.post('/api/receipts/:id/classify', async (req: Request, res: Response) => {
+      if (!deps.onReceiptClassify) {
+        res.status(501).json({ error: 'Line-item classification not configured' });
+        return;
+      }
+      const match = receiptStore.getMatchForReceipt(req.params.id as string);
+      if (!match) {
+        res.status(404).json({ error: 'No match found for this receipt' });
+        return;
+      }
+      try {
+        await deps.onReceiptClassify(match.id as string);
+        res.json({ success: true });
+      } catch (error) {
+        console.error('Error classifying receipt:', error);
+        res.status(500).json({ error: 'Failed to classify receipt' });
+      }
+    });
+
+    app.post('/api/receipts/:id/apply', async (req: Request, res: Response) => {
+      if (!deps.onReceiptApplySplit) {
+        res.status(501).json({ error: 'Split transactions not configured' });
+        return;
+      }
+      const match = receiptStore.getMatchForReceipt(req.params.id as string);
+      if (!match) {
+        res.status(404).json({ error: 'No match found for this receipt' });
+        return;
+      }
+      try {
+        await deps.onReceiptApplySplit(match.id as string);
+        res.json({ success: true });
+      } catch (error) {
+        console.error('Error applying split:', error);
+        res.status(500).json({ error: String(error instanceof Error ? error.message : error) });
+      }
+    });
+
+    app.post('/api/matches/:id/unmatch', async (req: Request, res: Response) => {
+      if (!deps.onReceiptUnmatch && !deps.onReceiptRollback) {
+        res.status(501).json({ error: 'Unmatch not configured' });
+        return;
+      }
+      try {
+        const match = receiptStore.getMatch(req.params.id as string);
+        if (!match) {
+          res.status(404).json({ error: 'Match not found' });
+          return;
+        }
+        if (match.status === 'applied' && deps.onReceiptRollback) {
+          await deps.onReceiptRollback(req.params.id as string);
+        }
+        if (deps.onReceiptUnmatch) {
+          deps.onReceiptUnmatch(req.params.id as string);
+        }
+        res.json({ success: true });
+      } catch (error) {
+        console.error('Error unmatching:', error);
+        res.status(500).json({ error: String(error instanceof Error ? error.message : error) });
+      }
+    });
+
+    app.post('/api/matches/:id/rematch', (req: Request, res: Response) => {
+      if (!deps.onReceiptRematch) {
+        res.status(501).json({ error: 'Rematch not configured' });
+        return;
+      }
+      const { transactionId } = req.body as { transactionId?: string };
+      if (!transactionId) {
+        res.status(400).json({ error: 'transactionId is required' });
+        return;
+      }
+      try {
+        const newMatchId = deps.onReceiptRematch(req.params.id as string, transactionId);
+        res.json({ matchId: newMatchId });
+      } catch (error) {
+        console.error('Error rematching:', error);
+        res.status(500).json({ error: String(error instanceof Error ? error.message : error) });
+      }
+    });
+
+    app.get('/api/matches/:id/history', (req: Request, res: Response) => {
+      const match = receiptStore.getMatch(req.params.id as string);
+      if (!match) {
+        res.status(404).json({ error: 'Match not found' });
+        return;
+      }
+      const history = receiptStore.getMatchHistory(match.receiptId as string);
+      res.json(history);
+    });
+
+    app.patch('/api/line-items/:id', (req: Request, res: Response) => {
+      const { status } = req.body as { status?: string };
+      if (status !== 'approved' && status !== 'rejected') {
+        res.status(400).json({ error: 'Status must be "approved" or "rejected"' });
+        return;
+      }
+      receiptStore.updateLineItemStatus(req.params.id as string, status);
+      res.json({ success: true });
     });
   }
 

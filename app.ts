@@ -14,6 +14,8 @@ import {
   receiptStore,
   connectorRegistry,
   matchingService,
+  lineItemClassifier,
+  splitTransactionService,
 } from './src/container';
 import ClassificationStore from './src/web/classification-store';
 import { createWebServer } from './src/web/server';
@@ -212,6 +214,52 @@ if (REVIEW_UI_ENABLED) {
 
     receiptStore: isFeatureEnabled('receiptMatching') ? receiptStore : undefined,
     connectorRegistry: isFeatureEnabled('receiptMatching') ? connectorRegistry : undefined,
+
+    onReceiptFetch: isFeatureEnabled('receiptMatching')
+      ? () => receiptFetchService.fetchAll()
+      : undefined,
+
+    onReceiptClassify: isFeatureEnabled('lineItemClassification')
+      ? async (matchId: string) => {
+        const apiService = await createTempApiService();
+        try {
+          const groups = await apiService.getCategoryGroups();
+          const flatCats: { id: string; name: string; group?: string }[] = [];
+          const groupsForPrompt: { id: string; name: string; categories: { id: string; name: string }[] }[] = [];
+          for (const group of groups) {
+            const cats: { id: string; name: string }[] = [];
+            if ('categories' in group && Array.isArray(group.categories)) {
+              for (const cat of group.categories as { id: string; name: string }[]) {
+                flatCats.push({ id: cat.id, name: cat.name, group: group.name ?? '' });
+                cats.push({ id: cat.id, name: cat.name });
+              }
+            }
+            groupsForPrompt.push({ id: group.id ?? '', name: group.name ?? '', categories: cats });
+          }
+          await apiService.shutdown();
+          await lineItemClassifier.classifyReceipt(matchId, flatCats, groupsForPrompt);
+        } catch (err) {
+          await apiService.shutdown();
+          throw err;
+        }
+      }
+      : undefined,
+
+    onReceiptApplySplit: isFeatureEnabled('receiptMatching')
+      ? (matchId: string) => splitTransactionService.applySplit(matchId)
+      : undefined,
+
+    onReceiptUnmatch: isFeatureEnabled('receiptMatching')
+      ? (matchId: string) => matchingService.unmatch(matchId)
+      : undefined,
+
+    onReceiptRematch: isFeatureEnabled('receiptMatching')
+      ? (matchId: string, txId: string) => matchingService.rematch(matchId, txId)
+      : undefined,
+
+    onReceiptRollback: isFeatureEnabled('receiptMatching')
+      ? (matchId: string) => splitTransactionService.rollbackSplit(matchId)
+      : undefined,
 
     getConfig() {
       return {
