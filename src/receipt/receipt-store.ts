@@ -1,11 +1,15 @@
 import Database from 'better-sqlite3';
 import crypto from 'crypto';
+import fs from 'fs';
 import path from 'path';
 
 class ReceiptStore {
   private db: Database.Database;
 
   constructor(dataDir: string) {
+    if (!fs.existsSync(dataDir)) {
+      fs.mkdirSync(dataDir, { recursive: true });
+    }
     const dbPath = path.join(dataDir, 'receipts.db');
     this.db = new Database(dbPath);
     this.db.pragma('journal_mode = WAL');
