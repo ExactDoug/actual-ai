@@ -1,0 +1,35 @@
+I want to categorize the individual items from a receipt/invoice.
+
+Store/Vendor: {{vendorName}}
+Transaction Date: {{date}}
+Account: {{accountName}}
+
+Receipt line items:
+{{#each lineItems}}
+{{incIndex @index}}. {{description}} — qty {{quantity}} @ {{unitPrice}} = {{totalPrice}}
+{{/each}}
+
+{{#if additionalCharges}}
+Additional charges:
+{{#each additionalCharges}}
+- {{type}}: {{description}} {{amount}}
+{{/each}}
+{{/if}}
+
+Existing categories by group:
+{{#each categoryGroups}}
+GROUP: {{name}} (ID: "{{id}}")
+{{#each categories}}
+* {{name}} (ID: "{{id}}")
+{{/each}}
+{{/each}}
+
+IMPORTANT: Respond with a JSON array — one entry per line item, in order:
+[
+  { "itemIndex": 0, "type": "existing", "categoryId": "...", "confidence": "high"|"medium"|"low" },
+  ...
+]
+
+For items you cannot confidently categorize, set confidence to "low" and
+provide your best guess. The system will fall back to alternative methods
+for low-confidence items.

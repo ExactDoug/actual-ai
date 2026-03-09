@@ -35,8 +35,11 @@ import {
   openrouterTitle,
   password,
   promptTemplate,
+  receiptAutoMatch,
   receiptConnectors,
+  receiptDateToleranceDays,
   receiptFetchDaysBack,
+  receiptMatchToleranceCents,
   serverURL,
   valueSerpApiKey,
   veryfiUsername,
@@ -63,6 +66,7 @@ import ReceiptStore from './receipt/receipt-store';
 import ConnectorRegistry from './receipt/connector-registry';
 import VeryfiAdapter from './receipt/veryfi-adapter';
 import ReceiptFetchService from './receipt/receipt-fetch-service';
+import MatchingService from './receipt/matching-service';
 
 // Create tool service if API key is available and tools are enabled
 export function createToolService(): ToolService | undefined {
@@ -187,5 +191,18 @@ const receiptFetchService = new ReceiptFetchService(
   receiptFetchDaysBack,
 );
 
-export { transactionProcessor, receiptStore, connectorRegistry, receiptFetchService };
+const matchingService = new MatchingService(
+  receiptStore,
+  receiptMatchToleranceCents,
+  receiptDateToleranceDays,
+  receiptAutoMatch,
+);
+
+export {
+  transactionProcessor,
+  receiptStore,
+  connectorRegistry,
+  receiptFetchService,
+  matchingService,
+};
 export default actualAi;

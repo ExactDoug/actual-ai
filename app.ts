@@ -8,7 +8,13 @@ import {
   guessedTag, notGuessedTag,
 } from './src/config';
 import actualAi from './src/container';
-import { transactionProcessor as txProcessor, receiptFetchService } from './src/container';
+import {
+  transactionProcessor as txProcessor,
+  receiptFetchService,
+  receiptStore,
+  connectorRegistry,
+  matchingService,
+} from './src/container';
 import ClassificationStore from './src/web/classification-store';
 import { createWebServer } from './src/web/server';
 import type { UnifiedResponse, APICategoryEntity, APICategoryGroupEntity } from './src/types';
@@ -74,15 +80,42 @@ txProcessor.setOnClassified(
 async function runClassification() {
   currentRunId = crypto.randomUUID();
 
-  // Fetch receipts before classification when receipt matching is enabled
+  // Fetch receipts and run matching before classification
   if (isFeatureEnabled('receiptMatching')) {
     try {
-      const result = await receiptFetchService.fetchAll();
-      if (result.errors.length > 0) {
-        console.warn(`Receipt fetch completed with ${result.errors.length} error(s)`);
+      const fetchResult = await receiptFetchService.fetchAll();
+      if (fetchResult.errors.length > 0) {
+        console.warn(`Receipt fetch completed with ${fetchResult.errors.length} error(s)`);
       }
     } catch (err) {
       console.error('Receipt fetch failed (continuing with classification):', err);
+    }
+
+    try {
+      // Get uncategorized transactions for matching
+      const tempApi = await createTempApiService();
+      try {
+        const accounts = await tempApi.getAccounts();
+        let transactions: TransactionEntity[] = [];
+        for (const account of accounts) {
+          transactions = transactions.concat(
+            await tempApi.getTransactions(account.id, '1990-01-01', '2030-01-01'),
+          );
+        }
+        // Match receipts against transactions that lack a category
+        const uncategorized = transactions.filter((t) => !t.category && !t.is_parent && t.amount !== 0);
+        matchingService.matchAll(uncategorized.map((t) => ({
+          id: t.id,
+          amount: t.amount,
+          date: t.date,
+          payee: (t as unknown as { payee_name?: string }).payee_name,
+          imported_payee: t.imported_payee ?? undefined,
+        })));
+      } finally {
+        await tempApi.shutdown();
+      }
+    } catch (err) {
+      console.error('Receipt matching failed (continuing with classification):', err);
     }
   }
 
@@ -176,6 +209,9 @@ if (REVIEW_UI_ENABLED) {
         throw err;
       }
     },
+
+    receiptStore: isFeatureEnabled('receiptMatching') ? receiptStore : undefined,
+    connectorRegistry: isFeatureEnabled('receiptMatching') ? connectorRegistry : undefined,
 
     getConfig() {
       return {

@@ -201,12 +201,12 @@ After receipt fetch (Phase 1), before classification:
 
 ### 2.5 — Deliverables & Verification
 
-- [ ] Matching produces correct confidence levels for known receipt/transaction pairs
-- [ ] Exact matches auto-confirm when `RECEIPT_AUTO_MATCH=true`
-- [ ] Zero-amount items excluded
-- [ ] Ambiguous matches flagged (not auto-resolved)
-- [ ] Match history audit trail records all operations
-- [ ] Unmatched pools queryable from store
+- [x] Matching produces correct confidence levels for known receipt/transaction pairs
+- [x] Exact matches auto-confirm when `RECEIPT_AUTO_MATCH=true`
+- [x] Zero-amount items excluded
+- [x] Ambiguous matches flagged (not auto-resolved)
+- [x] Match history audit trail records all operations
+- [x] Unmatched pools queryable from store
 
 ---
 

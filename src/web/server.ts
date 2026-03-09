@@ -3,6 +3,8 @@ import cookieParser from 'cookie-parser';
 import ClassificationStore, { ClassificationFilter } from './classification-store';
 import { authMiddleware, loginHandler, loginPage, COOKIE_NAME } from './auth';
 import { renderDashboard, renderClassifications, renderHistory } from './views/renderer';
+import ReceiptStore from '../receipt/receipt-store';
+import ConnectorRegistry from '../receipt/connector-registry';
 
 export interface WebServerDeps {
   actualPassword: string;
@@ -11,6 +13,8 @@ export interface WebServerDeps {
   onTriggerClassify: () => Promise<void>;
   getCategories: () => Promise<{ id: string; name: string; group: string }[]>;
   getConfig: () => Record<string, unknown>;
+  receiptStore?: ReceiptStore;
+  connectorRegistry?: ConnectorRegistry;
 }
 
 export function createWebServer(deps: WebServerDeps): express.Express {
@@ -145,7 +149,80 @@ export function createWebServer(deps: WebServerDeps): express.Express {
     res.json(deps.getConfig());
   });
 
+  // --- Receipt API Routes ---
+  if (deps.receiptStore) {
+    const receiptStore = deps.receiptStore;
+    const connectorRegistry = deps.connectorRegistry;
+
+    app.get('/api/receipts/unmatched', (_req: Request, res: Response) => {
+      const rows = receiptStore.getUnmatchedReceipts();
+      res.json(rows);
+    });
+
+    app.get('/api/receipts/:id', (req: Request, res: Response) => {
+      const receipt = receiptStore.getReceipt(req.params.id as string);
+      if (!receipt) {
+        res.status(404).json({ error: 'Receipt not found' });
+        return;
+      }
+      res.json(receipt);
+    });
+
+    app.get('/api/receipts', (req: Request, res: Response) => {
+      const filter = parseReceiptFilter(req.query as Record<string, unknown>);
+      const result = receiptStore.listReceipts(filter);
+      res.json({ rows: result.rows, total: result.total, page: filter.page ?? 1, limit: filter.limit ?? 50 });
+    });
+
+    app.get('/api/transactions/unmatched', (_req: Request, res: Response) => {
+      res.status(501).json({ error: 'Not implemented: requires transaction data from Actual Budget' });
+    });
+
+    app.get('/api/connectors', (_req: Request, res: Response) => {
+      if (!connectorRegistry) {
+        res.json([]);
+        return;
+      }
+      const connectors = connectorRegistry.getAll().map((c) => ({
+        providerId: c.providerId,
+        registered: true,
+      }));
+      res.json(connectors);
+    });
+
+    app.post('/api/connectors/:id/test', async (req: Request, res: Response) => {
+      if (!connectorRegistry) {
+        res.status(404).json({ error: 'No connector registry configured' });
+        return;
+      }
+      const connector = connectorRegistry.get(req.params.id as string);
+      if (!connector) {
+        res.status(404).json({ error: `Connector "${req.params.id}" not found` });
+        return;
+      }
+      try {
+        const result = await connector.testConnection();
+        res.json(result);
+      } catch (error) {
+        console.error('Error testing connector:', error);
+        res.status(500).json({ error: 'Failed to test connector' });
+      }
+    });
+
+    app.get('/api/receipt-stats', (_req: Request, res: Response) => {
+      res.json(receiptStore.getStats());
+    });
+  }
+
   return app;
+}
+
+function parseReceiptFilter(query: Record<string, unknown>): { status?: string; page?: number; limit?: number } {
+  return {
+    status: query.status as string | undefined,
+    page: query.page ? Number(query.page) : 1,
+    limit: query.limit ? Number(query.limit) : 50,
+  };
 }
 
 function parseFilter(query: Record<string, unknown>): ClassificationFilter {
