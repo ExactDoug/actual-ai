@@ -1,18 +1,22 @@
 import fs from 'fs';
+import { z } from 'zod';
 import handlebars from '../handlebars-helpers';
 import LlmService from '../llm-service';
 import PromptGenerator from '../prompt-generator';
 import ReceiptStore from './receipt-store';
 import allocateTax, { validateReceiptBalance } from './tax-allocator';
 import { ReceiptDocument } from './types';
-import { cleanJsonResponse } from '../utils/json-utils';
 
-interface LlmClassificationItem {
-  itemIndex: number;
-  type: string;
-  categoryId: string;
-  confidence: string;
-}
+const lineItemClassificationSchema = z.object({
+  items: z.array(z.object({
+    itemIndex: z.number(),
+    type: z.string(),
+    categoryId: z.string(),
+    confidence: z.enum(['high', 'medium', 'low']),
+  })),
+});
+
+type LlmClassificationItem = z.infer<typeof lineItemClassificationSchema>['items'][number];
 
 interface CategoryInfo {
   id: string;
@@ -130,30 +134,16 @@ class LineItemClassifier {
     // Step 5-6: Compile template and generate prompt
     const prompt = this.lineItemTemplate(promptContext);
 
-    // Step 7: Call LLM
-    let llmResponseText: string;
-    try {
-      // ask() returns UnifiedResponse for standard classification. For line-item
-      // classification we need the raw text (JSON array). Use askUsingFallbackModel
-      // which returns the raw LLM output as a string. We apply cleanJsonResponse
-      // ourselves to extract the JSON array from any surrounding text.
-      const rawText = await this.llmService.generateRawText(prompt);
-      llmResponseText = rawText;
-    } catch (err) {
-      console.error(`LLM call failed for match ${matchId}:`, err);
-      return;
-    }
-
-    // Step 8: Parse response as JSON array
+    // Step 7-8: Call LLM with structured output (JSON schema enforcement)
     let llmResults: LlmClassificationItem[];
     try {
-      const cleaned = cleanJsonResponse(llmResponseText);
-      llmResults = JSON.parse(cleaned) as LlmClassificationItem[];
-      if (!Array.isArray(llmResults)) {
-        throw new Error('LLM response is not a JSON array');
-      }
+      const result = await this.llmService.generateStructuredOutput(
+        prompt,
+        lineItemClassificationSchema,
+      );
+      llmResults = result.items;
     } catch (err) {
-      console.error(`Failed to parse LLM classification response for match ${matchId}:`, err);
+      console.error(`LLM classification failed for match ${matchId}:`, err);
       return;
     }
 

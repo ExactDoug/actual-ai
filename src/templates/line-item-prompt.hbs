@@ -24,12 +24,21 @@ GROUP: {{name}} (ID: "{{id}}")
 {{/each}}
 {{/each}}
 
-IMPORTANT: Respond with a JSON array — one entry per line item, in order:
-[
-  { "itemIndex": 0, "type": "existing", "categoryId": "...", "confidence": "high"|"medium"|"low" },
-  ...
-]
+Classify each line item into one of the existing categories above.
+
+For each item, provide:
+- itemIndex: the 0-based index of the line item
+- type: "existing" (use an existing category ID from above)
+- categoryId: the UUID of the matching category
+- confidence: "high", "medium", or "low"
 
 For items you cannot confidently categorize, set confidence to "low" and
-provide your best guess. The system will fall back to alternative methods
-for low-confidence items.
+provide your best guess.
+
+Example response for a 2-item receipt:
+{
+  "items": [
+    { "itemIndex": 0, "type": "existing", "categoryId": "abc-123", "confidence": "high" },
+    { "itemIndex": 1, "type": "existing", "categoryId": "def-456", "confidence": "medium" }
+  ]
+}
