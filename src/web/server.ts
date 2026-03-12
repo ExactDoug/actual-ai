@@ -6,6 +6,10 @@ import { renderDashboard, renderClassifications, renderHistory } from './views/r
 import ReceiptStore from '../receipt/receipt-store';
 import ConnectorRegistry from '../receipt/connector-registry';
 import type { BatchRequest, BatchResponse } from '../receipt/batch-service';
+import {
+  renderReceiptQueue, renderReceiptDetail, renderUnmatchedReceipts,
+  renderReceiptDashboard, MatchQueueFilter,
+} from './views/receipt-renderer';
 
 export interface WebServerDeps {
   actualPassword: string;
@@ -162,10 +166,41 @@ export function createWebServer(deps: WebServerDeps): express.Express {
     res.json(deps.getConfig());
   });
 
-  // --- Receipt API Routes ---
+  // --- Receipt Page Routes ---
   if (deps.receiptStore) {
     const receiptStore = deps.receiptStore;
     const connectorRegistry = deps.connectorRegistry;
+
+    app.get('/receipts/dashboard', (_req: Request, res: Response) => {
+      const stats = receiptStore.getStats();
+      res.send(renderReceiptDashboard(stats));
+    });
+
+    app.get('/receipts/unmatched', (_req: Request, res: Response) => {
+      const rows = receiptStore.getUnmatchedReceipts();
+      res.send(renderUnmatchedReceipts(rows));
+    });
+
+    app.get('/receipts/:id', (req: Request, res: Response) => {
+      const detail = receiptStore.getMatchDetail(req.params.id as string);
+      if (!detail) {
+        res.status(404).send('Match not found');
+        return;
+      }
+      res.send(renderReceiptDetail(detail.match, detail.receipt, detail.classifications, detail.history));
+    });
+
+    app.get('/receipts', (req: Request, res: Response) => {
+      const filter = parseMatchQueueFilter(req.query as Record<string, unknown>);
+      const storeFilter = {
+        ...filter,
+        overridesExisting: filter.overridesExisting === '1' ? true : filter.overridesExisting === '0' ? false : undefined,
+      };
+      const result = receiptStore.listMatchQueue(storeFilter);
+      res.send(renderReceiptQueue(result.rows, result.total, filter));
+    });
+
+    // --- Receipt API Routes ---
 
     app.get('/api/receipts/unmatched', (_req: Request, res: Response) => {
       const rows = receiptStore.getUnmatchedReceipts();
@@ -448,6 +483,23 @@ export function createWebServer(deps: WebServerDeps): express.Express {
 function parseReceiptFilter(query: Record<string, unknown>): { status?: string; page?: number; limit?: number } {
   return {
     status: query.status as string | undefined,
+    page: query.page ? Number(query.page) : 1,
+    limit: query.limit ? Number(query.limit) : 50,
+  };
+}
+
+function parseMatchQueueFilter(query: Record<string, unknown>): MatchQueueFilter {
+  return {
+    status: query.status as string | undefined,
+    confidence: query.confidence as string | undefined,
+    overridesExisting: query.overridesExisting as string | undefined,
+    vendor: query.vendor as string | undefined,
+    dateFrom: query.dateFrom as string | undefined,
+    dateTo: query.dateTo as string | undefined,
+    amountMin: query.amountMin ? Number(query.amountMin) : undefined,
+    amountMax: query.amountMax ? Number(query.amountMax) : undefined,
+    sortBy: query.sortBy as string | undefined,
+    sortDir: (query.sortDir as string)?.toLowerCase() === 'asc' ? 'asc' : 'desc',
     page: query.page ? Number(query.page) : 1,
     limit: query.limit ? Number(query.limit) : 50,
   };

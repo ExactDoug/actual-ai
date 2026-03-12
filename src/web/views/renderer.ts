@@ -89,6 +89,9 @@ function layout(title: string, content: string, activeNav: string): string {
     <a href="/" class="${activeNav === 'dashboard' ? 'active' : ''}">Dashboard</a>
     <a href="/classifications" class="${activeNav === 'classifications' ? 'active' : ''}">Classifications</a>
     <a href="/history" class="${activeNav === 'history' ? 'active' : ''}">History</a>
+    <span style="color:#3a3d52;">|</span>
+    <a href="/receipts/dashboard">Receipts</a>
+    <a href="/receipts">Queue</a>
     <span class="spacer"></span>
     <a href="/logout" class="logout">Logout</a>
   </nav>

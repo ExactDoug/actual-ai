@@ -539,6 +539,113 @@ class ReceiptStore {
   }
 
   // ---------------------------------------------------------------------------
+  // Match Queue (paginated, filtered, with receipt data joined)
+  // ---------------------------------------------------------------------------
+
+  listMatchQueue(filter: {
+    status?: string | string[];
+    confidence?: string | string[];
+    overridesExisting?: boolean;
+    vendor?: string;
+    dateFrom?: string;
+    dateTo?: string;
+    amountMin?: number;
+    amountMax?: number;
+    sortBy?: string;
+    sortDir?: 'asc' | 'desc';
+    page?: number;
+    limit?: number;
+  }): { rows: Record<string, unknown>[]; total: number } {
+    const conditions: string[] = [];
+    const params: unknown[] = [];
+
+    if (filter.status) {
+      const statuses = Array.isArray(filter.status) ? filter.status : [filter.status];
+      conditions.push(`rm.status IN (${statuses.map(() => '?').join(', ')})`);
+      params.push(...statuses);
+    }
+    if (filter.confidence) {
+      const confidences = Array.isArray(filter.confidence) ? filter.confidence : [filter.confidence];
+      conditions.push(`rm.matchConfidence IN (${confidences.map(() => '?').join(', ')})`);
+      params.push(...confidences);
+    }
+    if (filter.overridesExisting !== undefined) {
+      conditions.push('rm.overridesExisting = ?');
+      params.push(filter.overridesExisting ? 1 : 0);
+    }
+    if (filter.vendor) {
+      conditions.push('r.vendorName LIKE ?');
+      params.push(`%${filter.vendor}%`);
+    }
+    if (filter.dateFrom) {
+      conditions.push('r.date >= ?');
+      params.push(filter.dateFrom);
+    }
+    if (filter.dateTo) {
+      conditions.push('r.date <= ?');
+      params.push(filter.dateTo);
+    }
+    if (filter.amountMin !== undefined) {
+      conditions.push('r.totalAmount >= ?');
+      params.push(filter.amountMin);
+    }
+    if (filter.amountMax !== undefined) {
+      conditions.push('r.totalAmount <= ?');
+      params.push(filter.amountMax);
+    }
+
+    const where = conditions.length > 0 ? `WHERE ${conditions.join(' AND ')}` : '';
+    const limit = Math.min(filter.limit ?? 50, 200);
+    const offset = ((filter.page ?? 1) - 1) * limit;
+
+    const allowedSorts: Record<string, string> = {
+      status: 'rm.status',
+      confidence: 'rm.matchConfidence',
+      vendor: 'r.vendorName',
+      date: 'r.date',
+      amount: 'r.totalAmount',
+      matchedAt: 'rm.matchedAt',
+    };
+    const sortCol = allowedSorts[filter.sortBy ?? ''] ?? 'rm.matchedAt';
+    const sortDir = filter.sortDir === 'asc' ? 'ASC' : 'DESC';
+
+    const countParams = [...params];
+    const total = (this.db.prepare(
+      `SELECT COUNT(*) as count FROM receipt_matches rm
+       JOIN receipts r ON r.id = rm.receiptId ${where}`,
+    ).get(...countParams) as { count: number }).count;
+
+    const rows = this.db.prepare(
+      `SELECT rm.id, rm.transactionId, rm.receiptId, rm.matchConfidence,
+              rm.matchedAt, rm.status, rm.overridesExisting,
+              r.vendorName, r.totalAmount, r.date AS receiptDate,
+              r.lineItemCount, r.currency, r.taxAmount
+       FROM receipt_matches rm
+       JOIN receipts r ON r.id = rm.receiptId
+       ${where}
+       ORDER BY ${sortCol} ${sortDir}
+       LIMIT ? OFFSET ?`,
+    ).all(...params, limit, offset) as Record<string, unknown>[];
+
+    return { rows, total };
+  }
+
+  getMatchDetail(matchId: string): {
+    match: Record<string, unknown>;
+    receipt: Record<string, unknown>;
+    classifications: Record<string, unknown>[];
+    history: Record<string, unknown>[];
+  } | null {
+    const match = this.getMatch(matchId);
+    if (!match) return null;
+    const receipt = this.getReceipt(match.receiptId as string);
+    if (!receipt) return null;
+    const classifications = this.getClassificationsForMatch(matchId);
+    const history = this.getMatchHistory(match.receiptId as string);
+    return { match, receipt, classifications, history };
+  }
+
+  // ---------------------------------------------------------------------------
   // Utility
   // ---------------------------------------------------------------------------
 

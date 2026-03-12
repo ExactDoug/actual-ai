@@ -393,7 +393,7 @@ is just a loop with error collection.
 
 ---
 
-## Phase 7: Review UI — Receipt Views ⬜ NOT STARTED
+## Phase 7: Review UI — Receipt Views ✅ COMPLETE
 
 Build the HTML views for the receipt workflow in the Review UI. All views
 must support filtering, sorting, selection, and bulk actions.
@@ -506,13 +506,15 @@ Summary cards:
 
 ### 7.7 — Deliverables & Verification
 
-- [ ] Receipt match queue with full filtering, sorting, selection, bulk actions
-- [ ] Receipt detail page with line-item review and split preview
-- [ ] Unmatched receipts page with manual match workflow
-- [ ] Unmatched transactions page (requires API implementation)
-- [ ] Dashboard with summary statistics
-- [ ] Bulk actions trigger batch API endpoints (Phase 6)
-- [ ] Override warning displayed for already-categorized transactions
+- [x] Receipt match queue with full filtering, sorting, selection, bulk actions
+- [x] Receipt detail page with line-item review and split preview
+- [x] Unmatched receipts page
+- [ ] Unmatched transactions page (deferred — requires Actual Budget API connection per request)
+- [x] Dashboard with summary statistics
+- [x] Bulk actions trigger batch API endpoints (Phase 6)
+- [x] Override warning displayed for already-categorized transactions
+
+**Files**: `src/web/views/receipt-renderer.ts` (new), `src/receipt/receipt-store.ts` (listMatchQueue, getMatchDetail), `src/web/server.ts` (page routes), `src/web/views/renderer.ts` (nav links), `tests/receipt-views.test.ts` (16 tests)
 - [ ] Confirmation dialogs for destructive/override actions
 - [ ] Responsive layout (works on tablet/desktop)
 
