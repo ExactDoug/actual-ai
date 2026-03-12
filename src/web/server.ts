@@ -187,15 +187,19 @@ export function createWebServer(deps: WebServerDeps): express.Express {
         res.status(404).send('Match not found');
         return;
       }
-      res.send(renderReceiptDetail(detail.match, detail.receipt, detail.classifications, detail.history));
+      const html = renderReceiptDetail(
+        detail.match, detail.receipt,
+        detail.classifications, detail.history,
+      );
+      res.send(html);
     });
 
     app.get('/receipts', (req: Request, res: Response) => {
       const filter = parseMatchQueueFilter(req.query as Record<string, unknown>);
-      const storeFilter = {
-        ...filter,
-        overridesExisting: filter.overridesExisting === '1' ? true : filter.overridesExisting === '0' ? false : undefined,
-      };
+      let overridesExisting: boolean | undefined;
+      if (filter.overridesExisting === '1') overridesExisting = true;
+      else if (filter.overridesExisting === '0') overridesExisting = false;
+      const storeFilter = { ...filter, overridesExisting };
       const result = receiptStore.listMatchQueue(storeFilter);
       res.send(renderReceiptQueue(result.rows, result.total, filter));
     });

@@ -14,7 +14,7 @@ The receipt/OCR integration for actual-ai has been fully implemented across
 Phases 1-7 of the plan, with line-item classification live-tested against
 real receipt data. The implementation adds 12 new TypeScript files in
 `src/receipt/` and `src/web/views/`, 2 Handlebars prompt templates, and modifies 9 existing files.
-All 318 tests pass across 42 test suites. The full `npm run build` succeeds
+All 175 tests pass across 22 test suites. The full `npm run build` succeeds
 with zero errors.
 
 The system can now:

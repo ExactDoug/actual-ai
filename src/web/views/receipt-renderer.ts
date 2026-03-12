@@ -27,9 +27,11 @@ export function renderReceiptQueue(
   const qs = (overrides: Record<string, string | number | undefined>) => {
     const p = new URLSearchParams();
     const merged: Record<string, unknown> = { ...filter, ...overrides };
-    for (const [k, v] of Object.entries(merged)) {
-      if (v != null && v !== '' && k !== 'page') p.set(k, String(v));
-    }
+    Object.entries(merged).forEach(([k, val]) => {
+      if (val != null && val !== '' && k !== 'page') {
+        p.set(k, String(val));
+      }
+    });
     if (overrides.page && overrides.page !== 1) p.set('page', String(overrides.page));
     const s = p.toString();
     return s ? `?${s}` : '';

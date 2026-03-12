@@ -565,9 +565,11 @@ class ReceiptStore {
       params.push(...statuses);
     }
     if (filter.confidence) {
-      const confidences = Array.isArray(filter.confidence) ? filter.confidence : [filter.confidence];
-      conditions.push(`rm.matchConfidence IN (${confidences.map(() => '?').join(', ')})`);
-      params.push(...confidences);
+      const vals = Array.isArray(filter.confidence)
+        ? filter.confidence : [filter.confidence];
+      const ph = vals.map(() => '?').join(', ');
+      conditions.push(`rm.matchConfidence IN (${ph})`);
+      params.push(...vals);
     }
     if (filter.overridesExisting !== undefined) {
       conditions.push('rm.overridesExisting = ?');
@@ -594,7 +596,8 @@ class ReceiptStore {
       params.push(filter.amountMax);
     }
 
-    const where = conditions.length > 0 ? `WHERE ${conditions.join(' AND ')}` : '';
+    const where = conditions.length > 0
+      ? `WHERE ${conditions.join(' AND ')}` : '';
     const limit = Math.min(filter.limit ?? 50, 200);
     const offset = ((filter.page ?? 1) - 1) * limit;
 
@@ -641,8 +644,12 @@ class ReceiptStore {
     const receipt = this.getReceipt(match.receiptId as string);
     if (!receipt) return null;
     const classifications = this.getClassificationsForMatch(matchId);
-    const history = this.getMatchHistory(match.receiptId as string);
-    return { match, receipt, classifications, history };
+    const history = this.getMatchHistory(
+      match.receiptId as string,
+    );
+    return {
+      match, receipt, classifications, history,
+    };
   }
 
   // ---------------------------------------------------------------------------
