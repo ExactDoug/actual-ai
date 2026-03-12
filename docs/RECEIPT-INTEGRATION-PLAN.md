@@ -2,519 +2,458 @@
 
 **Spec**: `docs/RECEIPT-INTEGRATION-REQUIREMENTS.md`
 **Branch**: `feature/receipt-integration`
-**Depends on**: Veryfi TypeScript client (`src/veryfi/`) — already complete
+**Depends on**: Veryfi TypeScript client (`src/veryfi/`) — complete
+
+**Last updated**: 2026-03-12
 
 ---
 
-## Phase 1: Foundation
+## Phase 1: Foundation ✅ COMPLETE
 
 Build the receipt connector framework, wire the Veryfi adapter, and persist
-fetched receipts in SQLite. No matching or classification yet — just fetch and
-store.
+fetched receipts in SQLite.
 
-### 1.1 — Configuration & Feature Flags
+### Deliverables
 
-**Files**: `src/config.ts`
-
-- Add env vars: `RECEIPT_CONNECTORS`, `VERYFI_USERNAME`, `VERYFI_PASSWORD`,
-  `VERYFI_TOTP_SECRET`, `RECEIPT_MATCH_TOLERANCE_CENTS` (default 5),
-  `RECEIPT_DATE_TOLERANCE_DAYS` (default 1), `RECEIPT_AUTO_MATCH` (default
-  true), `RECEIPT_FETCH_DAYS_BACK` (default 30), `RECEIPT_TAG` (default
-  `#actual-ai-receipt`)
-- Register feature flags: `receiptMatching`, `lineItemClassification`,
-  `autoSplitTransactions`
-- Add flag dependency validation on startup: `lineItemClassification` requires
-  `receiptMatching`; `autoSplitTransactions` requires both. Log warning and
-  disable dependent flag if unsatisfied.
-
-### 1.2 — Receipt Store (SQLite)
-
-**New file**: `src/receipt/receipt-store.ts`
-
-Extend the existing `better-sqlite3` pattern from `classification-store.ts`:
-
-- Create tables: `receipts`, `receipt_matches`, `receipt_match_history`,
-  `line_item_classifications` (schema from spec Section 10)
-- Create view: `transaction_receipt_status`
-- All FKs with `ON DELETE CASCADE`; enable `PRAGMA foreign_keys = ON`
-- DB path: `${dataDir}/receipts.db` (separate from classifications.db)
-- Methods:
-  - `upsertReceipt(receipt)` — insert or update by (providerId, externalId)
-  - `getReceipt(id)`, `getReceiptByExternalId(providerId, externalId)`
-  - `listReceipts(filter)` — paginated, filterable
-  - `findNearDuplicates(vendorName, date, totalAmount, toleranceCents)` —
-    for near-duplicate detection warning
-  - `createMatch(transactionId, receiptId, confidence)`
-  - `updateMatchStatus(matchId, status)`
-  - `getMatchesForTransaction(transactionId)`
-  - `getUnmatchedReceipts()`, `getUnmatchedTransactions(allTransactionIds)`
-  - `insertMatchHistory(entry)`
-  - `getMatchHistory(receiptId)`
-  - `insertLineItemClassification(record)`
-  - `getClassificationsForMatch(matchId)`
-  - `updateLineItemStatus(id, status)`
-  - `getStats()` — counts by match status
-
-### 1.3 — Receipt Connector Interface
-
-**New file**: `src/receipt/connector.ts`
-
-```typescript
-interface ReceiptConnector {
-  readonly providerId: string;
-  fetchReceipts(since: Date): Promise<{
-    receipts: ReceiptDocument[];
-    errors: Array<{ message: string; context?: unknown }>;
-  }>;
-  testConnection(): Promise<{ ok: boolean; message: string }>;
-}
-```
-
-**New file**: `src/receipt/connector-registry.ts`
-
-- Registry maps `providerId` → `ReceiptConnector` instance
-- `register(connector)`, `get(id)`, `getAll()` methods
-- Initialized from `RECEIPT_CONNECTORS` env var (comma-separated list)
-
-### 1.4 — Veryfi Adapter
-
-**New file**: `src/receipt/veryfi-adapter.ts`
-
-Adapter that implements `ReceiptConnector`, wrapping the existing Veryfi
-client (`src/veryfi/client.ts`):
-
-- `providerId: "veryfi"`
-- `fetchReceipts(since)`:
-  - Call `VeryfiClient.getReceipts({ createdGte: since })`
-  - Map each `VeryfiReceipt` → `ReceiptDocument` (spec Section 3.3):
-    - `date` ← `stamp_date` (OCR date), NOT `date`/`created`
-    - `totalAmount` ← `Math.round(total * 100)` (dollars→cents)
-    - `vendorName` ← `business_name`
-    - `vendorId` ← `String(business_id)` (numeric→string)
-    - Line items: use `.total` not `.price` (84% zero rate on price)
-    - Tax from receipt level only (line-item tax is always 0)
-  - Return `{ receipts, errors }` — partial failures logged, not thrown
-  - Near-duplicate detection: check `receipt-store.findNearDuplicates()`
-    before insert; log warning but still insert
-- `testConnection()`: call `VeryfiClient.healthCheck()`
-- Auth credentials from config: `VERYFI_USERNAME`, `VERYFI_PASSWORD`,
-  `VERYFI_TOTP_SECRET`
-
-### 1.5 — Receipt Types
-
-**New file**: `src/receipt/types.ts`
-
-TypeScript interfaces from spec Section 3.2:
-- `ReceiptDocument` — normalized receipt with all amounts in cents
-- `ReceiptLineItem` — individual line item
-- `ReceiptMatch` — transaction-to-receipt match record
-- `ReceiptMatchHistory` — audit trail entry
-- `LineItemClassification` — per-item classification result
-- `MatchConfidence`: `'exact' | 'probable' | 'possible' | 'manual'`
-- `MatchStatus`: `'pending' | 'classified' | 'approved' | 'applied' | 'rejected'`
-
-### 1.6 — Receipt Fetch Service
-
-**New file**: `src/receipt/receipt-fetch-service.ts`
-
-Orchestrates the fetch-and-store cycle:
-
-- `fetchAll()`:
-  - For each connector in registry: call `fetchReceipts(since)`
-  - `since` = now minus `RECEIPT_FETCH_DAYS_BACK` days
-  - Upsert each receipt into `receipt-store`
-  - Return summary: `{ fetched, new, updated, errors }`
-
-### 1.7 — Wire Into App
-
-**Files**: `src/container.ts`, `app.ts`
-
-- In `container.ts`: create `ReceiptStore`, `ConnectorRegistry`,
-  `VeryfiAdapter`, `ReceiptFetchService`
-- In `app.ts`: add receipt fetch to the classification cron job (fetch
-  receipts before running classification)
-- Add `receiptMatching` feature flag gate — skip all receipt logic if disabled
-
-### 1.8 — Deliverables & Verification
-
+- [x] Config: 10 env vars, 3 feature flags, dependency validation
+- [x] Receipt store: 4 tables, 1 view, WAL mode, foreign keys
+- [x] Connector interface + registry (pluggable OCR providers)
+- [x] Veryfi adapter: `stamp_date`, dollars→cents, `.total` not `.price`
+- [x] Receipt types: all interfaces in `src/receipt/types.ts`
+- [x] Fetch service: orchestrates fetch-and-upsert with near-duplicate detection
+- [x] Wired into `container.ts` and `app.ts` with feature flag gates
 - [x] `npm run build` passes
-- [x] Feature flags register correctly; dependency validation works
-- [x] Receipt store creates tables on first run
-- [ ] Veryfi adapter fetches and stores receipts (test with live API)
-- [x] Near-duplicate warning logged for same vendor/date/amount
-- [x] Receipts persist across restarts (SQLite on disk)
+
+**Files created**: `src/receipt/types.ts`, `connector-registry.ts`,
+`veryfi-adapter.ts`, `receipt-store.ts`, `receipt-fetch-service.ts`, `index.ts`
+
+**Files modified**: `src/config.ts`, `src/container.ts`, `app.ts`
 
 ---
 
-## Phase 2: Transaction-to-Receipt Matching
+## Phase 2: Transaction-to-Receipt Matching ✅ COMPLETE
 
-### 2.1 — Matching Algorithm
+### Deliverables
 
-**New file**: `src/receipt/matching-service.ts`
+- [x] Multi-signal matching: amount (high), date (medium), vendor (low-med)
+- [x] Confidence levels: exact, probable, possible, manual
+- [x] Conflict resolution: best-scoring receipt wins per transaction
+- [x] Match persistence with audit history
+- [x] Unmatch and rematch operations
+- [x] Wired into classification pipeline (runs before LLM classification)
 
-Implements spec Section 4.1:
+**Bug fixes applied post-implementation:**
+- [x] Date parsing: handles both `YYYY-MM-DD` strings and `YYYYMMDD` integers
+  (Actual Budget returns integers like `20251106`)
+- [x] Vendor normalization: strips apostrophes and punctuation before comparison
+  (`Arby's` now matches `ARBYS 1569 - FARMINGTON NM`)
+- [x] Payee resolution: resolves payee UUID → name via `getPayees()` lookup
+  (TransactionEntity.payee is a UUID, not a name)
 
-- `matchReceipts(transactions, receipts)` → `MatchResult[]`
-- For each unmatched receipt, score against each unmatched transaction:
-  - **Amount** (weight: High): `|receipt.totalAmount - abs(transaction.amount)|`
-    ≤ `RECEIPT_MATCH_TOLERANCE_CENTS` → strong signal
-  - **Date** (weight: Medium): `|receipt.date - transaction.date|`
-    ≤ `RECEIPT_DATE_TOLERANCE_DAYS` → positive signal
-  - **Vendor** (weight: Low-Medium): fuzzy match receipt.vendorName against
-    transaction.payee/imported_payee. Use `business_id` for reliable vendor
-    dedup when available.
-- Confidence scoring:
-  - `exact`: amount within tolerance AND date match AND vendor match
-  - `probable`: amount within tolerance AND (date OR vendor match)
-  - `possible`: amount within tolerance only
-- Exclude zero-amount transactions and receipts from matching
-- Auto-confirm `exact` matches when `RECEIPT_AUTO_MATCH` is true
-- One receipt per transaction (1:1); if multiple candidates, pick highest score
-- Handle ambiguity: multiple receipts → same transaction = flag for manual review
+**Retroactive matching:**
+- [x] Matching pool includes ALL non-split transactions (not just uncategorized)
+- [x] Matches to already-categorized transactions flagged with `overridesExisting=1`
+- [x] Requires explicit user approval before applying (protects existing data)
 
-### 2.2 — Unmatched Item Tracking
+**Files created**: `src/receipt/matching-service.ts`
 
-Built into `receipt-store.ts` methods (Phase 1.2):
+**Files modified**: `app.ts`, `src/receipt/receipt-store.ts`
 
-- `getUnmatchedReceipts()` — receipts with no row in `receipt_matches`
-- `getUnmatchedTransactions(allTransactionIds)` — transaction IDs not in
-  `receipt_matches`
-
-### 2.3 — Match Persistence
-
-**File**: `src/receipt/receipt-store.ts` (extend)
-
-- `createMatch()` stores match with confidence and status
-- `insertMatchHistory()` for audit trail
-- Auto-set status to `pending` (awaiting classification)
-
-### 2.4 — Wire Matching Into Pipeline
-
-**Files**: `src/actual-ai.ts` or `app.ts`
-
-After receipt fetch (Phase 1), before classification:
-1. Fetch all unmatched receipts from store
-2. Fetch uncategorized transactions from Actual Budget
-3. Run matching algorithm
-4. Persist matches
-5. Log summary: X exact, Y probable, Z possible, W unmatched
-
-### 2.5 — Deliverables & Verification
-
-- [x] Matching produces correct confidence levels for known receipt/transaction pairs
-- [x] Exact matches auto-confirm when `RECEIPT_AUTO_MATCH=true`
-- [x] Zero-amount items excluded
-- [x] Ambiguous matches flagged (not auto-resolved)
-- [x] Match history audit trail records all operations
-- [x] Unmatched pools queryable from store
+**Tests**: 28 tests in `tests/matching-service.test.ts`
 
 ---
 
-## Phase 3: Line-Item Classification
+## Phase 3: Line-Item Classification ✅ COMPLETE
 
-### 3.1 — Line-Item Prompt Template
+### Deliverables
 
-**New file**: `src/templates/line-item-prompt.hbs`
+- [x] Line-item prompt template (`src/templates/line-item-prompt.hbs`)
+- [x] Tax allocation: proportional distribution with taxable flags, rounding
+- [x] Receipt balance validation with discrepancy adjustment
+- [x] LLM-based classification of individual line items
+- [x] Fallback chain: low confidence → fallback type
+- [x] Classifications stored in `line_item_classifications` table
 
-Handlebars template from spec Section 5.4:
-- Vendor name, date, account context
-- All line items with description, qty, price
-- Additional charges (tip, fee, shipping)
-- Category groups and categories list
-- Expected JSON array response format
+**Files created**: `src/receipt/tax-allocator.ts`,
+`src/receipt/line-item-classifier.ts`, `src/templates/line-item-prompt.hbs`
 
-### 3.2 — Tax Allocation Algorithm
-
-**New file**: `src/receipt/tax-allocator.ts`
-
-Implements spec Section 5.2:
-- Input: line items (with totalPrice, taxable flag), totalTax
-- Order of operations: discount → tax → tip/shipping/fee
-- Handles: zero tax, zero total, taxable vs non-taxable items,
-  proportional distribution, deficit rounding to largest item
-- Validation assertion: sum of allocated amounts + charges = receipt total
-- Log discrepancy for the 46% of Veryfi receipts that don't reconcile;
-  adjust largest item to force balance
-
-### 3.3 — Line-Item Classifier
-
-**New file**: `src/receipt/line-item-classifier.ts`
-
-- `classifyItems(receipt, transaction, categories)` → `LineItemClassification[]`
-- Build prompt using `line-item-prompt.hbs`
-- Send to LLM via existing `LlmService`
-- Parse JSON array response: `{ itemIndex, type, categoryId, confidence }`
-- Batch: all items from one receipt in a single LLM call
-- Apply tax allocation to produce final amounts with tax
-- Handle additional charges (tip/shipping/fee as separate subtransactions)
-- Store results in `line_item_classifications` table
-
-### 3.4 — Fallback Behavior
-
-**File**: `src/receipt/line-item-classifier.ts`
-
-Spec Section 5.5:
-- **0 line items** (6% of Veryfi corpus): skip line-item pipeline, use
-  existing whole-transaction classification
-- **Low-confidence items**: secondary classification with web search on
-  item description; then whole-transaction fallback; then majority-category
-  fallback; then null + pending for manual review
-- **1-2 item receipts with low confidence**: fall back to whole-transaction
-  classification (don't split)
-
-### 3.5 — Wire Into Pipeline
-
-After matching (Phase 2), for each matched receipt with status `pending`:
-1. Check if receipt has line items (skip if 0)
-2. Run line-item classifier
-3. Store classifications
-4. Update match status to `classified`
-
-### 3.6 — Deliverables & Verification
-
-- [x] Line-item prompt generates valid LLM request
-- [x] Tax allocation produces correct amounts (test with spec's Walmart example)
-- [x] Rounding adjustment works (remainder applied to largest item)
-- [x] Fallback chain: low confidence → web search → whole-tx → majority → null
-- [x] 0-line-item receipts skip classification
-- [x] Classifications stored in SQLite with correct amounts
+**Tests**: 14 tests in `tests/tax-allocator.test.ts`
 
 ---
 
-## Phase 4: Split Transaction Service
+## Phase 4: Split Transactions ✅ COMPLETE
 
-### 4.1 — Split Transaction Service
+### Deliverables
 
-**New file**: `src/receipt/split-transaction-service.ts`
+- [x] Split plan builder: classifications → Actual Budget subtransactions
+- [x] Split transaction service: delete + re-create with snapshot rollback
+- [x] Actual API extensions: `getTransactionById`, `deleteTransaction`,
+  `importTransactionsWithSplits`
+- [x] Safeguards: no splitting already-split or reconciled transactions
+- [x] `#actual-ai-receipt` tag management (append on split, remove on rollback)
+- [ ] **Not verified**: Transaction ID preservation on delete + re-create
 
-Implements spec Section 6.2:
+**Files created**: `src/receipt/split-plan-builder.ts`,
+`src/receipt/split-transaction-service.ts`
 
-- `createSplit(plan: SplitPlan)`:
-  1. Snapshot original transaction → `receipt_matches.preSplitSnapshot`
-  2. Delete original transaction
-  3. Re-create via `importTransactions()` with `subtransactions[]`
-  4. Preserve: id, date, payee, account, imported_payee, notes, cleared/reconciled
-  5. Append `RECEIPT_TAG` to notes
-  6. **Verify ID preservation** — if ID changes, update all references
-- `rollbackSplit(matchId)`:
-  1. Read `preSplitSnapshot` from match record
-  2. Delete the split transaction
-  3. Re-create original from snapshot
-  4. Remove `RECEIPT_TAG` from notes
-  5. Update match status
+**Files modified**: `src/actual-api-service.ts`, `src/types.ts`
 
-### 4.2 — Actual API Extensions
-
-**File**: `src/actual-api-service.ts`
-
-Add methods:
-- `deleteTransaction(id)` — needed for delete + re-create pattern
-- `importTransactionsWithSplits(accountId, transactions)` — wrapper around
-  `importTransactions()` that includes `subtransactions` field
-- `getTransactionById(id)` — fetch single transaction for snapshot
-
-### 4.3 — SplitPlan Builder
-
-**New file**: `src/receipt/split-plan-builder.ts`
-
-Converts classified line items + tax allocation into a `SplitPlan`:
-- One `SplitEntry` per classified line item (amount = `amountWithTax` in cents)
-- Additional entries for tip/shipping/fee
-- Validate: sum of splits = original transaction amount
-- Adjust largest split if rounding difference
-
-### 4.4 — Safeguards
-
-**File**: `src/receipt/split-transaction-service.ts`
-
-- Never split an already-split transaction (`is_parent` check)
-- Never split a reconciled transaction without user confirmation
-  (defer to Review UI — don't auto-apply reconciled)
-- Verify subtransaction amounts sum to parent
-- Store pre-split snapshot for rollback
-
-### 4.5 — Deliverables & Verification
-
-- [x] Split creation produces correct subtransactions in Actual Budget
-- [ ] Transaction ID behavior documented and handled (preserved or remapped)
-- [x] `RECEIPT_TAG` appended on split, removed on rollback
-- [x] Pre-split snapshot stores complete transaction state
-- [x] Rollback restores original transaction accurately
-- [x] Already-split and reconciled transactions rejected
+**Tests**: 9 tests in `tests/split-plan-builder.test.ts`
 
 ---
 
-## Phase 5: Review UI Extensions
+## Phase 5: Receipt API Endpoints ✅ COMPLETE
 
-### 5.1 — Receipt API Endpoints
+### Deliverables
+
+- [x] 16 REST API endpoints (all behind auth middleware)
+- [x] Callback-based wiring from `app.ts` to web server
+- [x] Receipt listing with pagination and status filter
+- [x] Manual match, classify, apply, unmatch, rematch operations
+- [x] Connector listing and connectivity testing
+- [x] Match history audit trail
+- [ ] `GET /api/transactions/unmatched` — returns 501 (needs architecture work)
+
+**Files modified**: `src/web/server.ts`
+
+---
+
+## Phase 6: Batch Operations ⬜ NOT STARTED
+
+Add batch API endpoints so users can operate on multiple receipts/matches
+at once instead of one-by-one API calls.
+
+### 6.1 — Batch API Endpoints
 
 **File**: `src/web/server.ts`
 
-Add routes from spec Sections 4.5 and 7.3:
+New endpoints:
 
+| Method | Path | Description |
+|--------|------|-------------|
+| POST | `/api/batch/classify` | Classify multiple matched receipts |
+| POST | `/api/batch/approve` | Approve line items across multiple matches |
+| POST | `/api/batch/apply` | Apply splits for multiple approved matches |
+| POST | `/api/batch/unmatch` | Unmatch multiple matches |
+| POST | `/api/batch/reject` | Reject multiple matches |
+| POST | `/api/batch/reclassify` | Re-run classification on already-classified matches |
+
+**Request format** — all batch endpoints accept either explicit IDs or a filter:
+
+```typescript
+interface BatchRequest {
+  // Option A: explicit selection
+  matchIds?: string[];
+
+  // Option B: filter-based selection
+  filter?: {
+    status?: MatchStatus | MatchStatus[];       // e.g., "pending", ["pending", "classified"]
+    confidence?: MatchConfidence | MatchConfidence[];  // e.g., "exact", ["exact", "probable"]
+    overridesExisting?: boolean;                 // only matches that override existing categories
+    vendor?: string;                             // substring match on vendor name
+    dateFrom?: string;                           // receipt date range (YYYY-MM-DD)
+    dateTo?: string;
+    amountMin?: number;                          // receipt amount range (cents)
+    amountMax?: number;
+  };
+
+  // Safety: maximum items to process (default 50, max 200)
+  limit?: number;
+}
 ```
-GET    /api/receipts                     — list receipts with match status
-GET    /api/receipts/:id                 — single receipt with line items
-POST   /api/receipts/fetch               — trigger receipt fetch
-POST   /api/receipts/:id/match           — manual match (body: { transactionId })
-GET    /api/receipts/:id/splits          — preview proposed split
-POST   /api/receipts/:id/classify        — trigger line-item classification
-POST   /api/receipts/:id/apply           — apply split to Actual Budget
-GET    /api/transactions/unmatched       — unmatched transactions
-GET    /api/receipts/unmatched           — unmatched receipts
-POST   /api/matches/:id/unmatch          — remove match (rollback if applied)
-POST   /api/matches/:id/rematch          — rematch (body: { transactionId })
-GET    /api/matches/:id/history          — match audit trail
-GET    /api/connectors                   — list configured connectors
-POST   /api/connectors/:id/test          — test connector connectivity
+
+**Response format**:
+
+```typescript
+interface BatchResponse {
+  processed: number;
+  succeeded: number;
+  failed: number;
+  errors: Array<{ matchId: string; error: string }>;
+}
 ```
 
-### 5.2 — Receipt Match Review Page
+### 6.2 — Re-classification Support
 
-**File**: `src/web/views/renderer.ts` (extend)
+**File**: `src/receipt/line-item-classifier.ts`
 
-New pages/views:
-- **Receipt match queue**: table of matched receipts with status, confidence,
-  vendor, amount, date. Actions: approve, reject, rematch.
-- **Unmatched transactions**: filterable list with manual-match action
-- **Unmatched receipts**: filterable list with manual-match action
-- **Receipt detail view**: line items, tax, proposed split preview side-by-side
-  with the transaction. Receipt image (with 401/403 fallback placeholder).
-- **Split preview**: visual breakdown of how the transaction will be split
+Currently `classifyReceipt()` returns early if match status !== `'pending'`.
+Change to:
+- Allow re-classification when status is `'classified'` or `'rejected'`
+- Delete existing classifications before re-running
+- Log that this is a re-classification (include previous classification count)
+- Do NOT allow re-classification of `'applied'` matches (must rollback first)
 
-### 5.3 — Line-Item Review Actions
+### 6.3 — Batch Orchestration Service
 
-Per line-item:
-- Approve/reject suggested category
-- Change category (dropdown from Actual Budget categories)
-- Merge two adjacent line items (UI-only: concatenate descriptions, sum
-  amounts, record in notes field)
+**New file**: `src/receipt/batch-service.ts`
 
-Batch:
-- Approve all items on a receipt
-- Reject entire match
+Thin orchestration layer that coordinates batch operations:
+- Resolves filter → match IDs (queries receipt store)
+- Validates preconditions (correct status for each operation)
+- Calls existing individual services (classifier, split service, matching service)
+- Collects results and errors
+- Returns batch response
 
-### 5.4 — Deliverables & Verification
+This keeps the individual services unchanged and testable; the batch service
+is just a loop with error collection.
 
-- [x] All API endpoints return correct data
-- [ ] Receipt detail view renders line items and tax breakdown
-- [ ] Split preview shows accurate amounts
-- [x] Manual match workflow: select unmatched receipt + transaction → create match
-- [x] Unmatch rolls back applied splits correctly
-- [x] Rematch workflow: unmatch old → match new → re-classify
-- [ ] Image URL 401/403 shows placeholder with re-fetch option
-- [x] Match history audit trail visible
+### 6.4 — Deliverables & Verification
+
+- [ ] All 6 batch endpoints functional
+- [ ] Filter-based selection works with all filter fields
+- [ ] Explicit matchIds selection works
+- [ ] Re-classification deletes old classifications and re-runs LLM
+- [ ] Partial failures don't abort the batch (each item independent)
+- [ ] Limit parameter prevents runaway batch operations
+- [ ] Unit tests for batch service filter resolution and error collection
 
 ---
 
-## Implementation Order & Dependencies
+## Phase 7: Review UI — Receipt Views ⬜ NOT STARTED
 
-### Phase 1 internal order
+Build the HTML views for the receipt workflow in the Review UI. All views
+must support filtering, sorting, selection, and bulk actions.
 
-Steps 1.1 (config) and 1.5 (types) have no dependencies — do them first.
-Then 1.2 (store) and 1.3 (connector interface) can be done in parallel
-(both depend only on types). Then 1.4 (Veryfi adapter) needs 1.3. Then
-1.6 (fetch service) needs 1.2 + 1.3. Finally 1.7 (wire into app) is last.
+### 7.1 — Shared UI Patterns
 
-### After Phase 1: three parallel workstreams
+All list views follow a consistent pattern:
 
-```
-                      Phase 1
-                         |
-           ┌─────────────┼──────────────┐
-           v             v              v
-      [Stream A]    [Stream B]     [Stream C]
-       Phase 2      3.1 Prompt     4.2 API extensions
-       Matching     3.2 Tax alloc  5.1 Read-only API
-                                    endpoints
-           |             |
-           v             v
-           └──────┬──────┘
-                  v
-             Phase 3 wiring
-             (3.3–3.5)
-                  |
-                  v
-             Phase 4
-             (4.1, 4.3–4.4)
-                  |
-                  v
-             Phase 5 remaining
-             (write endpoints + UI views)
-```
+**Filtering toolbar** (top of every list):
+- Text search (vendor name, payee, description)
+- Date range picker (receipt date and/or transaction date)
+- Amount range (min/max)
+- Status dropdown (pending, classified, approved, applied, rejected)
+- Confidence dropdown (exact, probable, possible, manual)
+- Override filter (all / overrides existing / new only)
+- Account filter (Actual Budget account)
+- Clear filters button
+- Filters apply immediately (no submit button) via query parameters
 
-**Stream A — Matching (Phase 2):** Needs Phase 1 store and types.
-Pure scoring algorithm plus pipeline wiring.
+**Selection + bulk actions** (below filter toolbar):
+- Checkbox on each row + "select all" checkbox in header
+- "Select all N matching" link to select beyond current page
+- Bulk action bar appears when items are selected:
+  - Classify selected
+  - Approve selected
+  - Apply selected
+  - Reject selected
+  - Unmatch selected
+  - Re-classify selected
+- Confirmation dialog for destructive actions (unmatch, reject) and
+  override actions (applying to already-categorized transactions)
 
-**Stream B — Pure logic (no runtime deps):**
-- 3.1 Prompt template — Handlebars only, needs types for context vars.
-- 3.2 Tax allocator — pure math, unit-testable in isolation.
+**Pagination**: page size selector (25/50/100), prev/next, total count.
 
-**Stream C — API scaffolding (no matching/classification deps):**
-- 4.2 Actual API extensions (`deleteTransaction`, `getTransactionById`,
-  `importTransactionsWithSplits`) — new methods on existing service.
-- 5.1 Read-only receipt endpoints (`GET /api/receipts`,
-  `GET /api/receipts/unmatched`, `GET /api/transactions/unmatched`,
-  `GET /api/connectors`, `POST /api/connectors/:id/test`) — just
-  query the receipt store.
+**Sorting**: click column headers to sort. Default: most recent first.
 
-**After streams converge:**
-- Phase 3 wiring (3.3–3.5) needs Stream A (matches exist) + Stream B
-  (prompt + tax allocator ready).
-- Phase 4 (4.1, 4.3–4.4) needs Phase 3 (classified line items) +
-  Stream C (API extensions).
-- Phase 5 remaining (write endpoints, split preview, UI views) needs
-  Phase 4 (splits operational).
+### 7.2 — Receipt Match Queue Page
 
-### Estimated New Files
+**Route**: `/receipts` (default receipt view)
 
-| Phase | New Files | Modified Files |
-|-------|-----------|----------------|
-| 1 | 6 (`connector.ts`, `connector-registry.ts`, `veryfi-adapter.ts`, `receipt-store.ts`, `receipt-fetch-service.ts`, `types.ts`) | 3 (`config.ts`, `container.ts`, `app.ts`) |
-| 2 | 1 (`matching-service.ts`) | 2 (`receipt-store.ts`, `app.ts`) |
-| 3 | 3 (`line-item-classifier.ts`, `tax-allocator.ts`, `line-item-prompt.hbs`) | 1 (`app.ts`) |
-| 4 | 2 (`split-transaction-service.ts`, `split-plan-builder.ts`) | 1 (`actual-api-service.ts`) |
-| 5 | 0 | 2 (`server.ts`, `renderer.ts`) |
+Table columns:
+- ☐ (checkbox)
+- Status (badge: pending/classified/approved/applied/rejected)
+- Confidence (badge: exact/probable/possible/manual)
+- Override (⚠ icon if `overridesExisting`)
+- Receipt vendor
+- Receipt date
+- Receipt amount (formatted dollars)
+- Transaction payee
+- Transaction date
+- Transaction amount
+- Line items (count)
+- Matched at (timestamp)
 
-All new files in `src/receipt/` except the prompt template (`src/templates/`).
+Row click → navigates to receipt detail view.
+
+### 7.3 — Receipt Detail Page
+
+**Route**: `/receipts/:id`
+
+Two-column layout:
+
+**Left column — Receipt**:
+- Receipt image (if `imageUrl` available; placeholder if 401/403)
+- Receipt metadata: vendor, date, total, subtotal, tax, tip, discount, shipping
+- Line items table: description, qty, unit price, total price, allocated tax,
+  amount with tax, suggested category (dropdown), status (approve/reject buttons)
+- "Approve all" / "Reject all" buttons
+
+**Right column — Transaction**:
+- Transaction details: payee, date, amount, account, current category, notes
+- If `overridesExisting`: prominent warning banner showing current category
+  that will be replaced
+- Split preview: visual breakdown of proposed subtransactions with category
+  names and amounts
+- "Apply split" button (disabled until all line items approved)
+- "Unmatch" button
+- Match history (collapsible timeline)
+
+### 7.4 — Unmatched Receipts Page
+
+**Route**: `/receipts/unmatched`
+
+Same filtering/selection pattern as 7.1. Table shows all receipts with no
+match. Each row has a "Match" button that opens a transaction picker modal.
+
+### 7.5 — Unmatched Transactions Page
+
+**Route**: `/transactions/unmatched`
+
+Requires implementing `GET /api/transactions/unmatched`:
+- Create a transient Actual Budget API connection
+- Fetch all transactions, LEFT JOIN against receipt_matches
+- Return those without a match
+- Cache results briefly (transactions don't change between fetches)
+
+Table columns: date, payee, amount, account, current category.
+Each row has a "Match receipt" button → receipt picker modal.
+
+### 7.6 — Dashboard / Stats Page
+
+**Route**: `/receipts/dashboard`
+
+Summary cards:
+- Total receipts fetched
+- Matched / unmatched counts
+- Status breakdown (pending / classified / approved / applied / rejected)
+- Override count (matches that would replace existing categories)
+- Recent activity timeline
+
+### 7.7 — Deliverables & Verification
+
+- [ ] Receipt match queue with full filtering, sorting, selection, bulk actions
+- [ ] Receipt detail page with line-item review and split preview
+- [ ] Unmatched receipts page with manual match workflow
+- [ ] Unmatched transactions page (requires API implementation)
+- [ ] Dashboard with summary statistics
+- [ ] Bulk actions trigger batch API endpoints (Phase 6)
+- [ ] Override warning displayed for already-categorized transactions
+- [ ] Confirmation dialogs for destructive/override actions
+- [ ] Responsive layout (works on tablet/desktop)
 
 ---
 
-## Git Workflow
+## Phase 8: Live Testing & Verification ⬜ NOT STARTED
 
-**Branch**: `feature/receipt-integration` (from `master`)
+Test the full pipeline with real data before production deployment.
 
-Commit at the end of each numbered step within a phase. Each phase gets
-its own PR into `master` so changes are reviewable in manageable chunks.
+### 8.1 — Prerequisites
 
-| Phase | Branch | PR into |
-|-------|--------|---------|
-| 1 | `feature/receipt-integration` | `master` |
-| 2 | `feature/receipt-matching` | `master` |
-| 3 | `feature/receipt-classification` | `master` |
-| 4 | `feature/receipt-splits` | `master` |
-| 5 | `feature/receipt-review-ui` | `master` |
+- [ ] Azure AI subscription active (LLM calls)
+- [ ] Veryfi credentials configured
+- [ ] Actual Budget instance with uncategorized transactions available
+- [ ] `dryRun` enabled for initial testing (suggestions only, no auto-apply)
 
-Each PR should pass `npm run build` and any existing tests before merge.
-Add unit tests for new logic (tax allocator, matching scorer) within the
-same phase.
+### 8.2 — Veryfi End-to-End
+
+- [x] Fetch receipts from Veryfi API (31 receipts fetched successfully)
+- [x] TOTP auth with anti-replay works
+- [x] Receipt data stored correctly in SQLite
+- [x] Near-duplicate detection logs warnings
+
+### 8.3 — Matching Verification
+
+- [x] Matching runs against real Actual Budget transactions
+- [x] Date parsing handles Actual Budget integer format
+- [x] Vendor normalization matches real-world payee names
+- [x] Payee UUID resolution works via `getPayees()`
+- [ ] Verify correct matches with fresh uncategorized transactions
+  (current test data has no uncategorized transactions from receipt date range)
+- [ ] Verify `overridesExisting` flag on already-categorized transactions
+
+### 8.4 — Line-Item Classification
+
+- [ ] LLM classifies line items from a real receipt
+- [ ] Tax allocation produces correct amounts
+- [ ] Classifications stored with correct category IDs
+- [ ] Re-classification works on already-classified matches
+
+### 8.5 — Split Transaction Verification
+
+- [ ] Apply split: original transaction replaced with subtransactions
+- [ ] Transaction ID behavior documented (preserved or remapped)
+- [ ] Rollback: original transaction restored from snapshot
+- [ ] `#actual-ai-receipt` tag appended/removed correctly
+
+### 8.6 — Review UI Workflow
+
+- [ ] Full workflow via UI: view matches → classify → approve → apply
+- [ ] Unmatch/rematch from UI
+- [ ] Bulk operations via UI
+- [ ] Override approval gate works for already-categorized transactions
+
+---
+
+## Phase 9: Production Deployment ⬜ NOT STARTED
+
+### 9.1 — Build & Push
+
+- [ ] Build Docker image from `feature/receipt-integration` branch
+- [ ] Push to Harbor (`hr01.exactpartners.com/apps/actual-ai`)
+- [ ] Tag as `receipt-integration` (not `latest` until verified)
+
+### 9.2 — Deploy to dh01
+
+- [ ] Update container env vars:
+  - Add `receiptMatching`, `lineItemClassification` to FEATURES
+  - Add `RECEIPT_CONNECTORS=veryfi`
+  - Add Veryfi credentials
+  - Keep `dryRun` enabled initially
+- [ ] Pull and restart container with new image
+- [ ] Verify receipt fetch runs on startup
+- [ ] Verify Review UI accessible with receipt pages
+
+### 9.3 — Production Verification
+
+- [ ] Monitor first few classification runs
+- [ ] Verify matches against live transaction data
+- [ ] Test approve + apply workflow on a real transaction
+- [ ] Verify rollback works in production
+- [ ] Remove `dryRun` from FEATURES when confident (or keep as `requireApproval`)
+
+---
+
+## Implementation Order
+
+```
+Phases 1-5 ✅ COMPLETE
+     |
+     ├── Phase 6: Batch Operations
+     |     (batch endpoints, re-classification, batch service)
+     |
+     ├── Phase 7: Review UI — Receipt Views
+     |     (filtering, selection, bulk actions, detail pages)
+     |     (depends on Phase 6 for bulk action backends)
+     |
+     └── Phase 8: Live Testing
+           (can start in parallel with Phases 6-7 for API-level testing)
+           |
+           └── Phase 9: Production Deployment
+                 (after Phases 6-8 complete)
+```
+
+Phases 6 and 7 can be developed in parallel (API first, then UI that calls
+those APIs). Phase 8 testing of the existing individual endpoints can begin
+immediately; batch and UI testing depends on Phases 6-7.
 
 ---
 
 ## Key Risk Areas
 
 1. **Transaction ID preservation on delete + re-create** — Must verify with
-   `@actual-app/api` during Phase 4. If IDs change, reference remapping
+   `@actual-app/api` during Phase 8. If IDs change, reference remapping
    logic is needed. Test this early with a throwaway transaction.
 
 2. **Veryfi TOTP anti-replay** — The `waitForFreshTotp()` mechanism works but
    adds up to 30s latency on re-auth. If the cron job runs every 4 hours this
-   is fine; if triggered manually in quick succession, users may notice the delay.
+   is fine; if triggered manually in quick succession, users may notice delay.
 
 3. **46% receipt amount mismatch** — Nearly half of Veryfi receipts have
-   `total ≠ subtotal + tax + tip - discount`. The validation assertion
-   adjusts the largest item to force balance, but large adjustments should
-   be logged prominently so users can investigate.
+   `total ≠ subtotal + tax + tip - discount`. The tax allocator adjusts the
+   largest item to force balance, but large adjustments should be logged
+   prominently so users can investigate.
 
 4. **Actual Budget API limitations** — `updateTransaction()` doesn't support
    `subtransactions`. The delete + re-create approach works but is destructive.
@@ -524,3 +463,8 @@ same phase.
    separate databases. The data dir lock prevents concurrent classification
    runs, but the Review UI reads/writes concurrently. WAL mode handles
    this for reads; write contention is minimal (only user actions).
+
+6. **Batch operation safety** — Batch classify/apply could trigger many LLM
+   calls or many Actual Budget writes. The `limit` parameter (default 50,
+   max 200) prevents runaway operations. Batch apply on `overridesExisting`
+   matches should require explicit confirmation.
