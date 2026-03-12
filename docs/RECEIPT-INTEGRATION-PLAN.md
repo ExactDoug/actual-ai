@@ -68,14 +68,26 @@ fetched receipts in SQLite.
 ### Deliverables
 
 - [x] Line-item prompt template (`src/templates/line-item-prompt.hbs`)
+- [x] Structured output via `generateObject()` + Zod schema (JSON schema enforcement)
 - [x] Tax allocation: proportional distribution with taxable flags, rounding
 - [x] Receipt balance validation with discrepancy adjustment
 - [x] LLM-based classification of individual line items
-- [x] Fallback chain: low confidence → fallback type
+- [x] Low-confidence items tagged as `classificationType: "fallback"`
 - [x] Classifications stored in `line_item_classifications` table
+
+**Live-verified (2026-03-12):**
+- [x] Albertsons (7 items): 5 high, 2 low confidence — groceries classified correctly
+- [x] Dollar Tree (15 items): 15/15 high confidence — craft supplies → Hobbies
+- [x] Safeway (4 items): 4/4 high confidence — groceries classified correctly
+- [x] Fixed: `askUsingFallbackModel` stripped quotes from JSON responses
+- [x] Fixed: GPT-4.1 adds `//` comments and trailing commas to JSON
+- [x] Migrated from raw text parsing to `generateObject()` with Zod schema
 
 **Files created**: `src/receipt/tax-allocator.ts`,
 `src/receipt/line-item-classifier.ts`, `src/templates/line-item-prompt.hbs`
+
+**Files modified**: `src/llm-service.ts` (added `generateStructuredOutput()`),
+`src/utils/json-utils.ts` (comment/comma stripping for other callers)
 
 **Tests**: 14 tests in `tests/tax-allocator.test.ts`
 
@@ -115,6 +127,156 @@ fetched receipts in SQLite.
 - [ ] `GET /api/transactions/unmatched` — returns 501 (needs architecture work)
 
 **Files modified**: `src/web/server.ts`
+
+---
+
+## Phase 5.5: Fallback Classification Pipeline ⬜ NOT STARTED
+
+Implement the multi-tier fallback chain for low-confidence line items.
+Currently, items classified with `confidence: "low"` are tagged as
+`classificationType: "fallback"` and left for manual review. This phase
+adds automated secondary classification using web search, individual LLM
+queries, rules matching, and majority category assignment.
+
+See `docs/RECEIPT-INTEGRATION-REQUIREMENTS.md` Section 5.5 for full spec.
+
+### 5.5.1 — Fallback Search Query Builder
+
+**File**: `src/receipt/line-item-classifier.ts` (or new helper)
+
+Build optimized web search queries for low-confidence items by combining
+the item description with the vendor/merchant name:
+
+```
+"AGC DINO MEMOVALEN" Albertsons product
+"BLMNG UPGRADE 6" Albertsons product
+"CRFTSQ METAL DURO BRSHES" Dollar Tree product
+```
+
+The vendor context is the key advantage over the existing whole-transaction
+search. The original pipeline searches `"ALBERTSONS"` — the fallback
+searches `"AGC DINO MEMOVALEN" Albertsons product`, which is far more
+likely to identify the actual product.
+
+Clean OCR artifacts from item descriptions before building the query:
+- Replace underscores with spaces
+- Remove long numeric codes (SKU numbers, UPC fragments)
+- Trim excess whitespace
+
+### 5.5.2 — Fallback Prompt Template
+
+**New file**: `src/templates/line-item-fallback-prompt.hbs`
+
+Single-item classification prompt that includes:
+- The specific item to classify (description, qty, price)
+- Vendor name and receipt date
+- Web search results (top 3 snippets from Tier 1 search)
+- Other items on the same receipt with their classifications (context)
+- Full category list (same as primary classification)
+
+Uses the same structured output schema as the batch classification,
+but expects a single-item array.
+
+### 5.5.3 — Tier 1: Web Search + Individual LLM
+
+**Files modified**: `src/receipt/line-item-classifier.ts`
+
+After the primary batch classification completes:
+1. Identify all items with `confidence: "low"`
+2. For each low-confidence item:
+   a. Build search query: `"{description}" {vendorName} product`
+   b. Call `toolService.search(query)` (uses existing cache + rate limiting)
+   c. Render fallback prompt with search results + receipt context
+   d. Call `generateStructuredOutput()` for single-item classification
+   e. If new confidence is `"high"` or `"medium"`:
+      - Update the classification in the database
+      - Set `notes: "fallback:tier1:web-search"`
+      - Log: `[fallback] Item N: upgraded low→{confidence} via web search`
+   f. If still `"low"`, proceed to Tier 2
+
+### 5.5.4 — Tier 2: Rules-Based Classification
+
+**Files modified**: `src/receipt/line-item-classifier.ts`
+
+For items still at low confidence after Tier 1:
+1. Check item description against all Actual Budget transaction rules
+2. The rules engine is already available via `PromptGenerator` context
+3. If a rule matches:
+   - Update classification with `classificationType: "rule"`
+   - Set `notes: "fallback:tier2:rule-match:{ruleName}"`
+4. If no rule matches, proceed to Tier 3
+
+### 5.5.5 — Tier 3: Majority Category Assignment
+
+**Files modified**: `src/receipt/line-item-classifier.ts`
+
+For items still at low confidence after Tiers 1-2:
+1. Collect all high/medium confidence classifications on the same receipt
+2. Find the most common `suggestedCategoryId` (majority vote)
+3. If a majority exists:
+   - Assign that category with `classificationType: "fallback"`
+   - Set `notes: "fallback:tier3:majority-category"`
+4. If no majority exists (or no other items classified):
+   - Leave the original LLM guess as-is
+   - Set `notes: "fallback:tier4:manual-review"`
+   - Item stays `status: "pending"` for manual review in the UI
+
+### 5.5.6 — Special Case: 1-2 Item Receipts
+
+**Files modified**: `src/receipt/line-item-classifier.ts`
+
+If a receipt has only 1-2 items AND all items are low confidence:
+- Skip the split transaction path entirely
+- Fall back to the existing whole-transaction classification pipeline
+  (`llmService.ask()` with the standard `prompt.hbs` template)
+- This uses the full tool-calling flow (web search, rules, etc.)
+- Store the result as a single classification, not a split
+- Log: `[fallback] Receipt {id}: all items low confidence, using whole-transaction classification`
+
+If only 1 of 2 items is low confidence, run the normal fallback chain
+(Tiers 1-4) on that item.
+
+### 5.5.7 — Config & Feature Flag
+
+**File**: `src/config.ts`
+
+New optional env var:
+```
+RECEIPT_FALLBACK_WEB_SEARCH=true    # default: true
+```
+
+When `false`, skip Tier 1 (web search + individual LLM) and go straight to
+Tier 2 (rules). Useful if no search API key is configured or to minimize
+LLM API costs.
+
+No new feature flag — the fallback chain is gated by the existing
+`lineItemClassification` feature flag.
+
+### 5.5.8 — Wiring Changes
+
+**Files modified**: `src/container.ts`, `app.ts`
+
+The `LineItemClassifier` needs access to:
+- `ToolService` (for web search in Tier 1) — already instantiated in container
+- Transaction rules (for Tier 2) — available via `PromptGenerator` context
+- `LlmService.ask()` (for whole-transaction fallback on 1-2 item receipts)
+
+These are already available in `container.ts`; the classifier constructor
+needs to accept `ToolService` as an additional dependency.
+
+### 5.5.9 — Deliverables & Verification
+
+- [ ] Fallback prompt template created (`line-item-fallback-prompt.hbs`)
+- [ ] Search query builder handles OCR artifact cleanup
+- [ ] Tier 1: web search + individual LLM upgrades low→high/medium
+- [ ] Tier 2: rules engine matches item descriptions
+- [ ] Tier 3: majority category assignment from same-receipt items
+- [ ] Tier 4: items left for manual review with clear `notes` breadcrumb
+- [ ] 1-2 item receipt special case falls back to whole-transaction pipeline
+- [ ] `RECEIPT_FALLBACK_WEB_SEARCH=false` skips Tier 1
+- [ ] Each fallback tier logged with item index and outcome
+- [ ] `notes` column populated with fallback path for debugging
+- [ ] Unit tests for search query builder and tier progression
 
 ---
 
@@ -365,10 +527,22 @@ Test the full pipeline with real data before production deployment.
 
 ### 8.4 — Line-Item Classification
 
-- [ ] LLM classifies line items from a real receipt
-- [ ] Tax allocation produces correct amounts
-- [ ] Classifications stored with correct category IDs
+- [x] LLM classifies line items from a real receipt (Albertsons 7 items, Dollar Tree 15 items, Safeway 4 items)
+- [x] Structured output (JSON schema) produces valid, parseable responses
+- [x] Tax allocation produces correct amounts (proportional distribution verified)
+- [x] Classifications stored with correct category IDs (UUIDs from Actual Budget)
 - [ ] Re-classification works on already-classified matches
+
+### 8.4.1 — Fallback Classification Pipeline
+
+- [ ] Tier 1: web search + individual LLM upgrades a low-confidence item
+- [ ] Search query includes item description + vendor name
+- [ ] Fallback prompt includes search results and receipt context
+- [ ] Tier 2: rules engine matches an item description to a rule
+- [ ] Tier 3: majority category assigned when other items are classified
+- [ ] 1-2 item receipt special case uses whole-transaction pipeline
+- [ ] `notes` column records fallback path for each item
+- [ ] `RECEIPT_FALLBACK_WEB_SEARCH=false` correctly skips Tier 1
 
 ### 8.5 — Split Transaction Verification
 
@@ -420,23 +594,29 @@ Test the full pipeline with real data before production deployment.
 ```
 Phases 1-5 ✅ COMPLETE
      |
+     ├── Phase 5.5: Fallback Classification Pipeline
+     |     (web search + individual LLM, rules, majority, manual review)
+     |     (should be implemented before batch ops, since batch classify
+     |      needs to run the fallback chain automatically)
+     |
      ├── Phase 6: Batch Operations
      |     (batch endpoints, re-classification, batch service)
+     |     (batch classify triggers fallback chain for low-confidence items)
      |
      ├── Phase 7: Review UI — Receipt Views
      |     (filtering, selection, bulk actions, detail pages)
      |     (depends on Phase 6 for bulk action backends)
      |
      └── Phase 8: Live Testing
-           (can start in parallel with Phases 6-7 for API-level testing)
+           (can start in parallel with Phases 5.5-7 for API-level testing)
            |
            └── Phase 9: Production Deployment
-                 (after Phases 6-8 complete)
+                 (after Phases 5.5-8 complete)
 ```
 
-Phases 6 and 7 can be developed in parallel (API first, then UI that calls
-those APIs). Phase 8 testing of the existing individual endpoints can begin
-immediately; batch and UI testing depends on Phases 6-7.
+Phase 5.5 should be implemented first — the batch classification in Phase 6
+needs the fallback chain to run automatically for low-confidence items.
+Phases 6 and 7 can then be developed in parallel.
 
 ---
 

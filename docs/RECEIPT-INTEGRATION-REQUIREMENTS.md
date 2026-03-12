@@ -592,29 +592,224 @@ provide your best guess. The system will fall back to alternative methods
 for low-confidence items.
 ```
 
-### 5.5 Fallback Behavior
+### 5.5 Fallback Classification Pipeline
 
-**Receipts with 0 line items (6% of Veryfi corpus):**
-Skip the line-item classification pipeline entirely. The receipt still
-matches the transaction (by amount/date), but classification uses the
-existing whole-transaction AI pipeline. The match status stays at `pending`
-(no line-item classification step).
+The primary line-item classification (Section 5.4) uses structured output
+(`generateObject` with JSON schema enforcement) to classify all items in a
+single LLM call. Items receiving low confidence are then processed through
+a multi-tier fallback pipeline that leverages the existing actual-ai
+classification mechanisms — web search, rules, and individual LLM queries —
+enhanced with receipt-specific context.
 
-**When a line-item classification has low confidence:**
+#### 5.5.1 Receipts with 0 Line Items
 
-1. If the receipt has only 1-2 items, fall back to the existing whole-
-   transaction classification (AI + rules + web search on the payee/amount).
-   Don't create a split — assign the single category to the whole transaction.
-2. If the LLM returns a low-confidence result for an individual item, attempt
-   a secondary classification using just that item's description as a
-   standalone query with web search enabled.
-3. If still uncertain, use the whole-transaction classification as the
-   category for that line-item (the existing actual-ai behavior).
-4. If ALL fallbacks fail for an item, assign the same category as the
-   majority of other items on the receipt. If no majority exists, leave the
-   item's `suggestedCategoryId` as null and set status to `pending` for
-   manual review — the user must assign a category before the split can
-   be applied.
+6% of Veryfi receipts have no line items (OCR failure or receipt format not
+supported). These skip the line-item pipeline entirely:
+- The receipt still matches the transaction (by amount/date/vendor).
+- Classification uses the existing whole-transaction AI pipeline.
+- The match status stays at `pending` (no line-item classification step).
+- No split transaction is created — the transaction gets a single category.
+
+#### 5.5.2 Three-Tier Fallback Chain for Low-Confidence Items
+
+After the primary batch classification, any item with `confidence: "low"` is
+processed through the following fallback chain. Each tier attempts to upgrade
+the confidence; if it succeeds, the item is reclassified and processing moves
+to the next low-confidence item. If it fails, the next tier is attempted.
+
+**Tier 1: Web Search + Individual LLM Classification**
+
+For each low-confidence item, perform a targeted web search using the item
+description combined with the vendor/merchant context. This is a significant
+improvement over the existing whole-transaction search, which only knows the
+payee name and amount — here we know exactly what the item is AND where it
+was purchased.
+
+Search query construction:
+```
+"{item.description}" {receipt.vendorName} product
+```
+
+Examples:
+- `"AGC DINO MEMOVALEN" Albertsons product` → likely finds "dinosaur valentine card"
+- `"BLMNG UPGRADE 6" Albertsons product` → likely finds "blooming plant upgrade"
+- `"CRFTSQ METAL DURO BRSHES" Dollar Tree product` → likely finds "craft brushes"
+
+After the search returns results, a second LLM call is made for just that
+single item, with the search results included in the prompt context. This
+call uses the same structured output schema as the primary classification
+but for a single item. The prompt includes:
+- The item description, quantity, and price
+- The vendor name and receipt date
+- The web search results (top 3 snippets)
+- The full category list (same as primary classification)
+- The other items on the same receipt (for context — "this was bought
+  alongside groceries at Albertsons")
+
+The LLM can now reason: "Search says 'AGC DINO MEMOVALEN' is a dinosaur
+valentine card from Albertsons. The other items are groceries. This is
+likely a gift or party supply." This produces much higher confidence than
+the batch classification which only had the cryptic OCR text.
+
+**Tier 2: Rules-Based Classification**
+
+If web search + individual LLM still produces low confidence, attempt to
+classify using the existing Actual Budget rules engine:
+- Check the item description against all transaction categorization rules
+  (the same 208+ rules used by the main pipeline).
+- Rules match on payee, description, amount, and other fields.
+- If a rule matches, use its category with `classificationType: "rule"`.
+- This is a fast, deterministic fallback that doesn't require an LLM call.
+
+**Tier 3: Majority Category Assignment**
+
+If all automated classification attempts fail:
+- If the receipt has other items that WERE classified with high/medium
+  confidence, assign the most common (majority) category from those items.
+  Rationale: items purchased together at the same store are often in the
+  same budget category (e.g., all items at a grocery store → Groceries).
+- Set `classificationType: "fallback"` and `confidence: "low"` so the user
+  knows this was an automated guess.
+
+**Tier 4: Manual Review**
+
+If no majority category exists (all items are low confidence), or the item
+is clearly an outlier (e.g., a gift card at a grocery store):
+- Leave `suggestedCategoryId` as the original low-confidence LLM guess
+  (or null if the LLM couldn't produce any guess).
+- Set `classificationType: "fallback"` and `confidence: "low"`.
+- Set `status: "pending"` — the user must assign a category in the Review
+  UI before the split can be applied.
+- The Review UI shows these items prominently with a "needs review" badge.
+
+#### 5.5.3 Fallback for 1-2 Item Receipts
+
+Receipts with only 1-2 line items are a special case:
+- If ALL items are low confidence, skip the split transaction entirely.
+- Instead, fall back to the existing whole-transaction classification
+  pipeline (AI + rules + web search on the payee/amount).
+- Don't create a split — assign the single category to the whole
+  transaction, just like actual-ai normally does.
+- Rationale: splitting a 1-item receipt into 1 subtransaction adds
+  complexity with no benefit. A 2-item receipt where both items are low
+  confidence is also better served by whole-transaction classification.
+- If only 1 of 2 items is low confidence, still run the fallback chain
+  (Tiers 1-4) on that item. Only skip the split if ALL items fail.
+
+#### 5.5.4 Implementation Details
+
+**New Handlebars template**: `src/templates/line-item-fallback-prompt.hbs`
+
+This template is used for Tier 1 individual item classification. It differs
+from the batch prompt (`line-item-prompt.hbs`) in several ways:
+- Focuses on a SINGLE item instead of all items
+- Includes web search results in the prompt context
+- Includes the other items on the receipt as contextual hints
+- Uses the same structured output schema (single-item variant)
+
+Template structure:
+```
+I need to categorize a specific item from a receipt.
+
+Store/Vendor: {{vendorName}}
+Receipt Date: {{date}}
+
+Item to classify:
+  Description: {{item.description}}
+  Quantity: {{item.quantity}}
+  Unit Price: {{item.unitPrice}}
+  Total Price: {{item.totalPrice}}
+
+Other items on this receipt (for context):
+{{#each otherItems}}
+- {{description}} ({{totalPrice}}) → {{suggestedCategoryName}}
+{{/each}}
+
+{{#if searchResults}}
+Web search results for "{{item.description}}":
+{{searchResults}}
+{{/if}}
+
+Existing categories by group:
+{{#each categoryGroups}}
+GROUP: {{name}} (ID: "{{id}}")
+{{#each categories}}
+* {{name}} (ID: "{{id}}")
+{{/each}}
+{{/each}}
+
+Classify this item into one of the existing categories above.
+Respond with the category that best fits, considering the vendor context
+and search results.
+```
+
+**Schema for individual item fallback** (same structure, single item):
+```typescript
+const singleItemSchema = z.object({
+  items: z.array(z.object({
+    itemIndex: z.number(),
+    type: z.string(),
+    categoryId: z.string(),
+    confidence: z.enum(['high', 'medium', 'low']),
+  })).length(1),
+});
+```
+
+**Search query builder** (`buildFallbackSearchQuery`):
+```typescript
+function buildFallbackSearchQuery(
+  itemDescription: string,
+  vendorName: string,
+): string {
+  // Strip common OCR artifacts: underscores, excessive caps, trailing codes
+  const cleanDesc = itemDescription
+    .replace(/_/g, ' ')
+    .replace(/\b\d{4,}\b/g, '')  // Remove long numeric codes
+    .trim();
+  return `"${cleanDesc}" ${vendorName} product`;
+}
+```
+
+**Rate limiting considerations:**
+- Each low-confidence item triggers 1 web search + 1 LLM call.
+- The existing rate limiter (`RateLimiter`) applies to all LLM calls.
+- Web search calls use the existing `ToolService` with its own cache
+  (30-minute TTL, 200 entries max). Multiple items from the same vendor
+  may produce similar search queries that hit the cache.
+- For batch operations (Phase 6), the fallback chain runs sequentially
+  within each receipt to avoid overwhelming the search API.
+
+**Logging:**
+- Log each fallback tier attempted: `[fallback] Item 5 "AGC DINO MEMOVALEN": Tier 1 (web search)`
+- Log search query and whether cache was hit
+- Log final outcome: `[fallback] Item 5: upgraded low→high via web search (Gifts)`
+- Log if all tiers failed: `[fallback] Item 5: all tiers exhausted, leaving as fallback`
+
+**Database impact:**
+- No schema changes needed. The existing `line_item_classifications` table
+  already has `classificationType` (existing/new/rule/fallback) and
+  `confidence` (high/medium/low) columns.
+- Fallback-upgraded items get `classificationType` set to the tier that
+  succeeded: `"existing"` for Tier 1 LLM, `"rule"` for Tier 2, `"fallback"`
+  for Tier 3/4.
+- The `notes` column on `line_item_classifications` stores the fallback
+  path taken, e.g., `"fallback:tier1:web-search"` for debugging.
+
+#### 5.5.5 Feature Flag
+
+The fallback pipeline is gated behind the existing `lineItemClassification`
+feature flag. No new feature flag is needed — if line-item classification is
+enabled, fallback classification runs automatically for low-confidence items.
+
+An optional env var controls fallback behavior:
+
+```
+RECEIPT_FALLBACK_WEB_SEARCH=true    # Enable web search in fallback (default: true)
+```
+
+Setting this to `false` skips Tier 1 (web search + individual LLM) and goes
+directly to Tier 2 (rules). This is useful if the user doesn't have a
+ValueSERP API key configured or wants to minimize LLM calls.
 
 ## 6. Split Transaction Support in actual-ai
 

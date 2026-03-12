@@ -632,7 +632,16 @@ Any state → (no match) (unmatch; rollback if applied)
 
 - **Transaction ID preservation**: When deleting and re-creating a transaction via `importTransactions()`, the Actual Budget API may or may not preserve the original ID. This needs to be tested with a real Actual Budget instance. If IDs change, all references in `receipt_matches` and `line_item_classifications` need to be updated. The `preSplitSnapshot` stores the original transaction for rollback regardless.
 
-- **LLM line-item classification quality**: The prompt template is written but has not been tested against GPT-4.1 or any other model with real receipt data. The JSON array response format may need tuning based on model behavior. (Azure subscription was down during initial testing; now restored.)
+### 8.1b Verified via Live Testing (2026-03-12) — LLM Classification
+
+- **LLM line-item classification**: Tested against GPT-4.1 via Azure OpenAI with real receipt data. Three receipts classified successfully:
+  - Albertsons (7 items): 5 high, 2 low confidence — groceries correct, ambiguous items got reasonable fallback guesses
+  - Dollar Tree (15 items): 15/15 high confidence — craft supplies → Hobbies
+  - Safeway (4 items): 4/4 high confidence — groceries correct
+- **Structured output**: Migrated from raw text + JSON parsing to `generateObject()` with Zod schema. Eliminates JSON parse failures from LLM comments/formatting.
+- **Bugs fixed during live testing**:
+  - `askUsingFallbackModel()` stripped all quotes from responses (destroyed JSON). Added `generateRawText()`, then replaced with `generateStructuredOutput()`.
+  - GPT-4.1 adds `//` comments and trailing commas to JSON. Added cleanup to `cleanJsonResponse()` for other callers; structured output doesn't need it.
 
 ### 8.2 Verified via Live Testing (2026-03-12)
 
@@ -641,6 +650,15 @@ Any state → (no match) (unmatch; rollback if applied)
 - **Retroactive matching**: Matching pool widened to include already-categorized transactions. `overridesExisting` flag correctly set on matches to previously-categorized transactions.
 
 ### 8.3 Not Yet Implemented
+
+- **Fallback classification pipeline**: Low-confidence items from the primary
+  batch classification are tagged as `classificationType: "fallback"` but no
+  secondary classification runs. The multi-tier fallback chain (web search +
+  individual LLM → rules → majority category → manual review) is specced in
+  Section 5.5 of RECEIPT-INTEGRATION-REQUIREMENTS.md and planned as Phase 5.5
+  in RECEIPT-INTEGRATION-PLAN.md. This should be implemented before batch
+  operations (Phase 6) since batch classify needs to trigger the fallback
+  chain automatically.
 
 - **Batch operations**: No batch API endpoints for classify, approve, apply, unmatch, or reclassify. Each operation is individual only. See Phase 6 in RECEIPT-INTEGRATION-PLAN.md.
 
@@ -756,7 +774,8 @@ See `docs/RECEIPT-INTEGRATION-PLAN.md` for the full plan. Summary:
 - [x] ~~Live test Veryfi fetch~~ — 31 receipts fetched
 - [x] ~~Fix matching bugs~~ — date parsing, vendor normalization, payee resolution
 - [x] ~~Retroactive matching~~ — already-categorized transactions with overridesExisting flag
+- [ ] **Phase 5.5**: Fallback classification pipeline (web search + individual LLM, rules, majority category, manual review)
 - [ ] **Phase 6**: Batch operations (batch classify, approve, apply, unmatch, reclassify)
 - [ ] **Phase 7**: Review UI receipt views (filtering, selection, bulk actions)
-- [ ] **Phase 8**: Live testing (LLM classification, split apply/rollback, end-to-end)
+- [ ] **Phase 8**: Live testing (LLM classification, fallback chain, split apply/rollback, end-to-end)
 - [ ] **Phase 9**: Production deployment to dh01
