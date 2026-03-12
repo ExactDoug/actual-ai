@@ -146,4 +146,27 @@ export default class LlmService implements LlmServiceI {
       },
     );
   }
+
+  public async generateRawText(prompt: string): Promise<string> {
+    return this.rateLimiter.executeWithRateLimiting(
+      this.provider,
+      async () => {
+        const controller = new AbortController();
+        const timer = setTimeout(() => controller.abort(), this.timeoutMs);
+        console.log(`Sending text generation request to ${this.provider}`);
+        try {
+          const { text } = await generateText({
+            model: this.model,
+            prompt,
+            temperature: 0.1,
+            abortSignal: controller.signal,
+          });
+
+          return text;
+        } finally {
+          clearTimeout(timer);
+        }
+      },
+    );
+  }
 }

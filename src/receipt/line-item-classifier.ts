@@ -137,7 +137,7 @@ class LineItemClassifier {
       // classification we need the raw text (JSON array). Use askUsingFallbackModel
       // which returns the raw LLM output as a string. We apply cleanJsonResponse
       // ourselves to extract the JSON array from any surrounding text.
-      const rawText = await this.llmService.askUsingFallbackModel(prompt);
+      const rawText = await this.llmService.generateRawText(prompt);
       llmResponseText = rawText;
     } catch (err) {
       console.error(`LLM call failed for match ${matchId}:`, err);
