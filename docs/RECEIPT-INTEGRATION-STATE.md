@@ -11,10 +11,10 @@
 ## 1. Executive Summary
 
 The receipt/OCR integration for actual-ai has been fully implemented across
-Phases 1-5.5 of the plan, with line-item classification live-tested against
+Phases 1-6 of the plan, with line-item classification live-tested against
 real receipt data. The implementation adds 11 new TypeScript files in
 `src/receipt/`, 2 Handlebars prompt templates, and modifies 9 existing files.
-All 276 tests pass across 39 test suites. The full `npm run build` succeeds
+All 302 tests pass across 41 test suites. The full `npm run build` succeeds
 with zero errors.
 
 The system can now:
@@ -687,13 +687,11 @@ Any state → (no match) (unmatch; rollback if applied)
 
 ### 8.3 Not Yet Implemented
 
-- **Batch operations**: No batch API endpoints for classify, approve, apply, unmatch, or reclassify. Each operation is individual only. See Phase 6 in RECEIPT-INTEGRATION-PLAN.md.
-
 - **Review UI HTML views**: The `renderer.ts` file has not been updated with receipt-specific HTML pages. The API endpoints are all functional, but there are no rendered views. See Phase 7 in RECEIPT-INTEGRATION-PLAN.md. UI must support filtering by any criteria, selecting individual or multiple items, and triggering any available action on the selection.
 
 - **`GET /api/transactions/unmatched`**: Returns 501 Not Implemented. Requires a running Actual Budget API connection to fetch transaction data, which is not available to the web server in the current architecture (the API connection is transient, used only during classification runs).
 
-- **Re-classification**: `classifyReceipt()` currently skips matches that aren't in `'pending'` status. Needs to support re-running on `'classified'` and `'rejected'` matches.
+- ~~**Re-classification**: Now supported — `classifyReceipt()` accepts `'pending'`, `'classified'`, and `'rejected'` statuses; deletes old classifications before re-running.~~
 
 - **`autoSplitTransactions` feature flag**: The flag is registered but not wired into any automatic behavior. It was designed for future use where exact matches could bypass the review step entirely.
 
@@ -723,7 +721,7 @@ Any state → (no match) (unmatch; rollback if applied)
 
 ## 9. File Inventory Summary
 
-### New Files (13)
+### New Files (14)
 ```
 src/receipt/types.ts                  — TypeScript interfaces
 src/receipt/connector-registry.ts     — Provider registry
@@ -735,6 +733,7 @@ src/receipt/tax-allocator.ts          — Tax distribution with rounding
 src/receipt/line-item-classifier.ts   — LLM classification + tax allocation + fallback pipeline
 src/receipt/split-plan-builder.ts     — Classifications → split plan
 src/receipt/split-transaction-service.ts — Delete+re-create with rollback
+src/receipt/batch-service.ts           — Batch operations orchestrator (6 operations)
 src/receipt/index.ts                  — Barrel exports
 src/templates/line-item-prompt.hbs    — Handlebars template for batch LLM classification
 src/templates/line-item-fallback-prompt.hbs — Handlebars template for single-item fallback
@@ -765,13 +764,14 @@ CLAUDE.md                                 — Project overview
 
 ## 10. Test Status
 
-**All 276 tests pass across 39 test suites.**
+**All 302 tests pass across 41 test suites.**
 
 Receipt module tests added (2026-03-12):
 - `tests/tax-allocator.test.ts` — 14 tests (proportional allocation, taxable flags, rounding, edge cases)
 - `tests/matching-service.test.ts` — 28 tests (confidence levels, YYYYMMDD dates, vendor normalization, apostrophe stripping, payee resolution, conflict resolution, unmatch/rematch, overridesExisting flag)
 - `tests/split-plan-builder.test.ts` — 9 tests (approved filtering, additional charges, fallback categories, rounding)
 - `tests/line-item-classifier.test.ts` — 10 tests (cleanDescription OCR cleanup, buildSearchQuery formatting)
+- `tests/batch-service.test.ts` — 16 tests (filter resolution, batch approve/reject/apply/unmatch, error collection, limit enforcement)
 
 ---
 
@@ -807,7 +807,7 @@ See `docs/RECEIPT-INTEGRATION-PLAN.md` for the full plan. Summary:
 - [x] ~~Fix matching bugs~~ — date parsing, vendor normalization, payee resolution
 - [x] ~~Retroactive matching~~ — already-categorized transactions with overridesExisting flag
 - [x] ~~**Phase 5.5**: Fallback classification pipeline~~ — 4-tier fallback (web search + LLM, rules, majority category, manual review) + 1-2 item receipt special case
-- [ ] **Phase 6**: Batch operations (batch classify, approve, apply, unmatch, reclassify)
+- [x] ~~**Phase 6**: Batch operations~~ — 6 batch API endpoints, filter-based selection, re-classification, BatchService orchestrator
 - [ ] **Phase 7**: Review UI receipt views (filtering, selection, bulk actions)
 - [ ] **Phase 8**: Live testing (LLM classification, fallback chain, split apply/rollback, end-to-end)
 - [ ] **Phase 9**: Production deployment to dh01

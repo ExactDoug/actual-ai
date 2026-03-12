@@ -16,6 +16,7 @@ import {
   matchingService,
   lineItemClassifier,
   splitTransactionService,
+  batchService,
 } from './src/container';
 import ClassificationStore from './src/web/classification-store';
 import { createWebServer } from './src/web/server';
@@ -231,29 +232,11 @@ if (REVIEW_UI_ENABLED) {
 
     onReceiptClassify: isFeatureEnabled('lineItemClassification')
       ? async (matchId: string) => {
-        const apiService = await createTempApiService();
+        const { flatCats, groupsForPrompt, ruleDescriptions, shutdown } = await fetchClassificationContext();
         try {
-          const groups = await apiService.getCategoryGroups();
-          const payees = await apiService.getPayees();
-          const rules = await apiService.getRules();
-          const flatCats: { id: string; name: string; group?: string }[] = [];
-          const groupsForPrompt: { id: string; name: string; categories: { id: string; name: string }[] }[] = [];
-          for (const group of groups) {
-            const cats: { id: string; name: string }[] = [];
-            if ('categories' in group && Array.isArray(group.categories)) {
-              for (const cat of group.categories as { id: string; name: string }[]) {
-                flatCats.push({ id: cat.id, name: cat.name, group: group.name ?? '' });
-                cats.push({ id: cat.id, name: cat.name });
-              }
-            }
-            groupsForPrompt.push({ id: group.id ?? '', name: group.name ?? '', categories: cats });
-          }
-          const ruleDescriptions = transformRulesToDescriptions(rules, groups, payees);
-          await apiService.shutdown();
           await lineItemClassifier.classifyReceipt(matchId, flatCats, groupsForPrompt, ruleDescriptions);
-        } catch (err) {
-          await apiService.shutdown();
-          throw err;
+        } finally {
+          await shutdown();
         }
       }
       : undefined,
@@ -272,6 +255,44 @@ if (REVIEW_UI_ENABLED) {
 
     onReceiptRollback: isFeatureEnabled('receiptMatching')
       ? (matchId: string) => splitTransactionService.rollbackSplit(matchId)
+      : undefined,
+
+    onBatchClassify: isFeatureEnabled('lineItemClassification')
+      ? async (request) => {
+        const { flatCats, groupsForPrompt, ruleDescriptions, shutdown } = await fetchClassificationContext();
+        try {
+          return await batchService.batchClassify(request, flatCats, groupsForPrompt, ruleDescriptions);
+        } finally {
+          await shutdown();
+        }
+      }
+      : undefined,
+
+    onBatchApprove: isFeatureEnabled('receiptMatching')
+      ? (request) => batchService.batchApprove(request)
+      : undefined,
+
+    onBatchApply: isFeatureEnabled('receiptMatching')
+      ? (request) => batchService.batchApply(request)
+      : undefined,
+
+    onBatchUnmatch: isFeatureEnabled('receiptMatching')
+      ? (request) => batchService.batchUnmatch(request)
+      : undefined,
+
+    onBatchReject: isFeatureEnabled('receiptMatching')
+      ? (request) => batchService.batchReject(request)
+      : undefined,
+
+    onBatchReclassify: isFeatureEnabled('lineItemClassification')
+      ? async (request) => {
+        const { flatCats, groupsForPrompt, ruleDescriptions, shutdown } = await fetchClassificationContext();
+        try {
+          return await batchService.batchReclassify(request, flatCats, groupsForPrompt, ruleDescriptions);
+        } finally {
+          await shutdown();
+        }
+      }
       : undefined,
 
     getConfig() {
@@ -297,6 +318,28 @@ if (REVIEW_UI_ENABLED) {
   webApp.listen(REVIEW_UI_PORT, () => {
     console.log(`Review UI available at http://localhost:${REVIEW_UI_PORT}`);
   });
+}
+
+// Helper to fetch categories, groups, and rules for classification operations
+async function fetchClassificationContext() {
+  const apiService = await createTempApiService();
+  const groups = await apiService.getCategoryGroups();
+  const payees = await apiService.getPayees();
+  const rules = await apiService.getRules();
+  const flatCats: { id: string; name: string; group?: string }[] = [];
+  const groupsForPrompt: { id: string; name: string; categories: { id: string; name: string }[] }[] = [];
+  for (const group of groups) {
+    const cats: { id: string; name: string }[] = [];
+    if ('categories' in group && Array.isArray(group.categories)) {
+      for (const cat of group.categories as { id: string; name: string }[]) {
+        flatCats.push({ id: cat.id, name: cat.name, group: group.name ?? '' });
+        cats.push({ id: cat.id, name: cat.name });
+      }
+    }
+    groupsForPrompt.push({ id: group.id ?? '', name: group.name ?? '', categories: cats });
+  }
+  const ruleDescriptions = transformRulesToDescriptions(rules, groups, payees);
+  return { flatCats, groupsForPrompt, ruleDescriptions, shutdown: () => apiService.shutdown() };
 }
 
 // Helper to create a temporary API connection for applying classifications

@@ -277,6 +277,67 @@ class ReceiptStore {
     ).all(status) as Record<string, unknown>[];
   }
 
+  getMatchesByFilter(filter: {
+    status?: string | string[];
+    confidence?: string | string[];
+    overridesExisting?: boolean;
+    vendor?: string;
+    dateFrom?: string;
+    dateTo?: string;
+    amountMin?: number;
+    amountMax?: number;
+  }, limit = 50): Record<string, unknown>[] {
+    const conditions: string[] = [];
+    const params: unknown[] = [];
+
+    if (filter.status) {
+      const statuses = Array.isArray(filter.status) ? filter.status : [filter.status];
+      conditions.push(`rm.status IN (${statuses.map(() => '?').join(', ')})`);
+      params.push(...statuses);
+    }
+    if (filter.confidence) {
+      const confidences = Array.isArray(filter.confidence) ? filter.confidence : [filter.confidence];
+      conditions.push(`rm.matchConfidence IN (${confidences.map(() => '?').join(', ')})`);
+      params.push(...confidences);
+    }
+    if (filter.overridesExisting !== undefined) {
+      conditions.push('rm.overridesExisting = ?');
+      params.push(filter.overridesExisting ? 1 : 0);
+    }
+    if (filter.vendor) {
+      conditions.push('r.vendorName LIKE ?');
+      params.push(`%${filter.vendor}%`);
+    }
+    if (filter.dateFrom) {
+      conditions.push('r.date >= ?');
+      params.push(filter.dateFrom);
+    }
+    if (filter.dateTo) {
+      conditions.push('r.date <= ?');
+      params.push(filter.dateTo);
+    }
+    if (filter.amountMin !== undefined) {
+      conditions.push('r.totalAmount >= ?');
+      params.push(filter.amountMin);
+    }
+    if (filter.amountMax !== undefined) {
+      conditions.push('r.totalAmount <= ?');
+      params.push(filter.amountMax);
+    }
+
+    const where = conditions.length > 0 ? `WHERE ${conditions.join(' AND ')}` : '';
+    const safeLimit = Math.min(Math.max(limit, 1), 200);
+    params.push(safeLimit);
+
+    return this.db.prepare(
+      `SELECT rm.* FROM receipt_matches rm
+       JOIN receipts r ON r.id = rm.receiptId
+       ${where}
+       ORDER BY rm.matchedAt DESC
+       LIMIT ?`,
+    ).all(...params) as Record<string, unknown>[];
+  }
+
   setPreSplitSnapshot(matchId: string, snapshot: string): boolean {
     const result = this.db.prepare(
       'UPDATE receipt_matches SET preSplitSnapshot = ? WHERE id = ?',

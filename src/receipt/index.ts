@@ -5,6 +5,7 @@ export { default as ReceiptFetchService } from './receipt-fetch-service';
 export { default as MatchingService } from './matching-service';
 export { default as LineItemClassifier } from './line-item-classifier';
 export { default as SplitTransactionService } from './split-transaction-service';
+export { default as BatchService } from './batch-service';
 export { default as allocateTax, validateReceiptBalance } from './tax-allocator';
 export { default as buildSplitPlan } from './split-plan-builder';
 export * from './types';

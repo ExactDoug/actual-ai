@@ -290,7 +290,7 @@ needs to accept `ToolService` as an additional dependency.
 
 ---
 
-## Phase 6: Batch Operations ⬜ NOT STARTED
+## Phase 6: Batch Operations ✅ COMPLETE
 
 Add batch API endpoints so users can operate on multiple receipts/matches
 at once instead of one-by-one API calls.
@@ -372,13 +372,24 @@ is just a loop with error collection.
 
 ### 6.4 — Deliverables & Verification
 
-- [ ] All 6 batch endpoints functional
-- [ ] Filter-based selection works with all filter fields
-- [ ] Explicit matchIds selection works
-- [ ] Re-classification deletes old classifications and re-runs LLM
-- [ ] Partial failures don't abort the batch (each item independent)
-- [ ] Limit parameter prevents runaway batch operations
-- [ ] Unit tests for batch service filter resolution and error collection
+- [x] All 6 batch endpoints functional
+- [x] Filter-based selection works with all filter fields
+- [x] Explicit matchIds selection works
+- [x] Re-classification deletes old classifications and re-runs LLM
+- [x] Partial failures don't abort the batch (each item independent)
+- [x] Limit parameter prevents runaway batch operations
+- [x] Unit tests for batch service filter resolution and error collection
+
+**Files created**: `src/receipt/batch-service.ts`
+
+**Files modified**: `src/receipt/receipt-store.ts` (getMatchesByFilter),
+`src/receipt/line-item-classifier.ts` (re-classification support),
+`src/receipt/index.ts` (barrel export),
+`src/web/server.ts` (6 batch endpoints + callbacks),
+`src/container.ts` (BatchService wiring),
+`app.ts` (batch callbacks + fetchClassificationContext helper)
+
+**Tests**: 16 tests in `tests/batch-service.test.ts`
 
 ---
 
@@ -609,7 +620,7 @@ Phases 1-5.5 ✅ COMPLETE
      |     (should be implemented before batch ops, since batch classify
      |      needs to run the fallback chain automatically)
      |
-     ├── Phase 6: Batch Operations
+     ├── Phase 6: Batch Operations ✅
      |     (batch endpoints, re-classification, batch service)
      |     (batch classify triggers fallback chain for low-confidence items)
      |

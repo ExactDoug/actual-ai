@@ -71,6 +71,7 @@ import ReceiptFetchService from './receipt/receipt-fetch-service';
 import MatchingService from './receipt/matching-service';
 import LineItemClassifier from './receipt/line-item-classifier';
 import SplitTransactionService from './receipt/split-transaction-service';
+import BatchService from './receipt/batch-service';
 
 // Create tool service if API key is available and tools are enabled
 export function createToolService(): ToolService | undefined {
@@ -217,6 +218,13 @@ const splitTransactionService = new SplitTransactionService(
   receiptTag,
 );
 
+const batchService = new BatchService(
+  receiptStore,
+  lineItemClassifier,
+  splitTransactionService,
+  matchingService,
+);
+
 export {
   transactionProcessor,
   receiptStore,
@@ -225,5 +233,6 @@ export {
   matchingService,
   lineItemClassifier,
   splitTransactionService,
+  batchService,
 };
 export default actualAi;

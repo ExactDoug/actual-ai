@@ -118,8 +118,18 @@ class LineItemClassifier {
       console.log(`Match ${matchId} not found`);
       return;
     }
-    if (match.status !== 'pending') {
+    if (match.status === 'applied') {
+      console.log(`Match ${matchId} is applied — must rollback before reclassifying`);
       return;
+    }
+    if (match.status !== 'pending' && match.status !== 'classified' && match.status !== 'rejected') {
+      return;
+    }
+
+    // Handle re-classification: delete old classifications first
+    if (match.status === 'classified' || match.status === 'rejected') {
+      const oldCount = this.store.deleteClassificationsForMatch(matchId);
+      console.log(`Re-classifying match ${matchId} (deleted ${oldCount} previous classifications)`);
     }
 
     // Step 2: Get receipt data

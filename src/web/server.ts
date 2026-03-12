@@ -5,6 +5,7 @@ import { authMiddleware, loginHandler, loginPage, COOKIE_NAME } from './auth';
 import { renderDashboard, renderClassifications, renderHistory } from './views/renderer';
 import ReceiptStore from '../receipt/receipt-store';
 import ConnectorRegistry from '../receipt/connector-registry';
+import type { BatchRequest, BatchResponse } from '../receipt/batch-service';
 
 export interface WebServerDeps {
   actualPassword: string;
@@ -21,6 +22,12 @@ export interface WebServerDeps {
   onReceiptUnmatch?: (matchId: string) => void;
   onReceiptRematch?: (matchId: string, newTransactionId: string) => string;
   onReceiptRollback?: (matchId: string) => Promise<void>;
+  onBatchClassify?: (request: BatchRequest) => Promise<BatchResponse>;
+  onBatchApprove?: (request: BatchRequest) => BatchResponse;
+  onBatchApply?: (request: BatchRequest) => Promise<BatchResponse>;
+  onBatchUnmatch?: (request: BatchRequest) => BatchResponse;
+  onBatchReject?: (request: BatchRequest) => BatchResponse;
+  onBatchReclassify?: (request: BatchRequest) => Promise<BatchResponse>;
 }
 
 export function createWebServer(deps: WebServerDeps): express.Express {
@@ -355,6 +362,73 @@ export function createWebServer(deps: WebServerDeps): express.Express {
       }
       const history = receiptStore.getMatchHistory(match.receiptId as string);
       res.json(history);
+    });
+
+    // --- Batch endpoints ---
+    app.post('/api/batch/classify', async (req: Request, res: Response) => {
+      if (!deps.onBatchClassify) { res.status(501).json({ error: 'Batch classify not configured' }); return; }
+      try {
+        const result = await deps.onBatchClassify(req.body as BatchRequest);
+        res.json(result);
+      } catch (error) {
+        console.error('Batch classify error:', error);
+        res.status(500).json({ error: 'Batch classify failed' });
+      }
+    });
+
+    app.post('/api/batch/approve', (req: Request, res: Response) => {
+      if (!deps.onBatchApprove) { res.status(501).json({ error: 'Batch approve not configured' }); return; }
+      try {
+        const result = deps.onBatchApprove(req.body as BatchRequest);
+        res.json(result);
+      } catch (error) {
+        console.error('Batch approve error:', error);
+        res.status(500).json({ error: 'Batch approve failed' });
+      }
+    });
+
+    app.post('/api/batch/apply', async (req: Request, res: Response) => {
+      if (!deps.onBatchApply) { res.status(501).json({ error: 'Batch apply not configured' }); return; }
+      try {
+        const result = await deps.onBatchApply(req.body as BatchRequest);
+        res.json(result);
+      } catch (error) {
+        console.error('Batch apply error:', error);
+        res.status(500).json({ error: 'Batch apply failed' });
+      }
+    });
+
+    app.post('/api/batch/unmatch', (req: Request, res: Response) => {
+      if (!deps.onBatchUnmatch) { res.status(501).json({ error: 'Batch unmatch not configured' }); return; }
+      try {
+        const result = deps.onBatchUnmatch(req.body as BatchRequest);
+        res.json(result);
+      } catch (error) {
+        console.error('Batch unmatch error:', error);
+        res.status(500).json({ error: 'Batch unmatch failed' });
+      }
+    });
+
+    app.post('/api/batch/reject', (req: Request, res: Response) => {
+      if (!deps.onBatchReject) { res.status(501).json({ error: 'Batch reject not configured' }); return; }
+      try {
+        const result = deps.onBatchReject(req.body as BatchRequest);
+        res.json(result);
+      } catch (error) {
+        console.error('Batch reject error:', error);
+        res.status(500).json({ error: 'Batch reject failed' });
+      }
+    });
+
+    app.post('/api/batch/reclassify', async (req: Request, res: Response) => {
+      if (!deps.onBatchReclassify) { res.status(501).json({ error: 'Batch reclassify not configured' }); return; }
+      try {
+        const result = await deps.onBatchReclassify(req.body as BatchRequest);
+        res.json(result);
+      } catch (error) {
+        console.error('Batch reclassify error:', error);
+        res.status(500).json({ error: 'Batch reclassify failed' });
+      }
     });
 
     app.patch('/api/line-items/:id', (req: Request, res: Response) => {
