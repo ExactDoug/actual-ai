@@ -549,11 +549,27 @@ Split transaction in Actual Budget:
 | **Shipping** | Separate subtransaction, categorized as "Shopping" or "Shipping & Delivery" |
 | **Fee** | Separate subtransaction, categorized to the most relevant category or "Fees & Charges" |
 
-### 5.4 Line-Item LLM Prompt
+### 5.4 Line-Item LLM Prompt & Structured Output
 
-The existing prompt template is extended for line-item mode. Instead of asking
-the LLM to categorize one transaction, it receives the full receipt context:
+The classifier uses the Vercel AI SDK's `generateObject()` with a Zod schema
+to enforce structured JSON output. The API sends `response_format` with a
+JSON schema, guaranteeing the LLM returns valid, parseable data that conforms
+to the expected structure. This eliminates JSON parsing failures from LLM
+formatting quirks (comments, trailing commas, markdown fences).
 
+**Zod schema** (enforced at the API level):
+```typescript
+const lineItemClassificationSchema = z.object({
+  items: z.array(z.object({
+    itemIndex: z.number(),
+    type: z.string(),
+    categoryId: z.string(),
+    confidence: z.enum(['high', 'medium', 'low']),
+  })),
+});
+```
+
+**Prompt template** (`src/templates/line-item-prompt.hbs`):
 ```
 I want to categorize the individual items from a receipt/invoice.
 
@@ -581,16 +597,28 @@ GROUP: {{name}} (ID: "{{id}}")
 {{/each}}
 {{/each}}
 
-IMPORTANT: Respond with a JSON array — one entry per line item, in order:
-[
-  { "itemIndex": 0, "type": "existing", "categoryId": "...", "confidence": "high"|"medium"|"low" },
-  ...
-]
+Classify each line item into one of the existing categories above.
+
+For each item, provide:
+- itemIndex: the 0-based index of the line item
+- type: "existing" (use an existing category ID from above)
+- categoryId: the UUID of the matching category
+- confidence: "high", "medium", or "low"
 
 For items you cannot confidently categorize, set confidence to "low" and
-provide your best guess. The system will fall back to alternative methods
-for low-confidence items.
+provide your best guess.
+
+Example response for a 2-item receipt:
+{
+  "items": [
+    { "itemIndex": 0, "type": "existing", "categoryId": "abc-123", "confidence": "high" },
+    { "itemIndex": 1, "type": "existing", "categoryId": "def-456", "confidence": "medium" }
+  ]
+}
 ```
+
+The prompt provides context and examples, but the response format is
+enforced by the JSON schema — not by prompt instructions alone.
 
 ### 5.5 Fallback Classification Pipeline
 

@@ -1,27 +1,31 @@
 # Receipt Integration — Current State Document
 
-**Date**: 2026-03-09
+**Date**: 2026-03-12
 **Branch**: `feature/receipt-integration`
-**Base**: `master` (at commit `3aca8c1`)
-**Commits on branch**: 7 (from `97f887f` through `7723c4c`)
+**Base**: `master`
+**PR**: [#2](https://github.com/ExactDoug/actual-ai/pull/2) (open)
+**Commits on branch**: 14 (from `6010f7f` through `19a64c3`)
 
 ---
 
 ## 1. Executive Summary
 
-The receipt/OCR integration for actual-ai has been fully implemented across all
-five phases of the plan. The implementation adds 11 new TypeScript files in
-`src/receipt/`, 1 Handlebars prompt template, and modifies 6 existing files.
-All 160 existing tests pass. The full `npm run build` succeeds with zero errors.
+The receipt/OCR integration for actual-ai has been fully implemented across
+Phases 1-5 of the plan, with line-item classification live-tested against
+real receipt data. The implementation adds 11 new TypeScript files in
+`src/receipt/`, 1 Handlebars prompt template, and modifies 9 existing files.
+All 213 tests pass across 35 test suites. The full `npm run build` succeeds
+with zero errors.
 
 The system can now:
 - Fetch receipts from Veryfi (or any future OCR provider) via a pluggable connector
 - Match receipts to Actual Budget transactions using multi-signal scoring
-- Classify individual line items on matched receipts via LLM
+- Classify individual line items on matched receipts via LLM with structured
+  output (JSON schema enforcement via `generateObject()` + Zod)
 - Distribute tax proportionally across line items
 - Convert single transactions into split transactions with per-item categories
 - Roll back splits to restore the original transaction
-- Expose 14 new REST API endpoints for the Review UI to consume
+- Expose 16 new REST API endpoints for the Review UI to consume
 
 The integration is gated behind the `receiptMatching` feature flag and is
 completely dormant unless explicitly enabled.
@@ -31,6 +35,13 @@ completely dormant unless explicitly enabled.
 ## 2. Branch & Commit History
 
 ```
+19a64c3 docs: add fallback classification pipeline spec (Phase 5.5)
+e9f1966 feat: use structured output (JSON schema) for line-item classification
+bffead2 fix: LLM line-item classification JSON parsing
+b9a7f8d docs: update plan with Phases 6-9 and sync state document
+8263010 feat: match receipts to already-categorized transactions with approval gate
+95d86a5 fix: matching service date parsing, vendor normalization, and payee resolution
+895ff8d test: add unit tests for tax-allocator, matching-service, and split-plan-builder
 7723c4c fix: ensure receipt store creates data directory if missing
 a5a6e32 feat: add line-item classifier, split transactions, and receipt API endpoints (Phases 3-5)
 84e2ebf feat: add matching service, tax allocator, API extensions, receipt endpoints (Phase 2 + streams B/C)
@@ -40,7 +51,7 @@ c52558d feat: add receipt connector framework and Veryfi adapter (Phase 1)
 6010f7f feat: add Review UI for classification approval workflow
 ```
 
-The branch has NOT been pushed to remote yet. No PR has been created.
+Branch is pushed to remote. PR #2 is open against `master`.
 
 ---
 
@@ -286,11 +297,23 @@ Algorithm:
 - `indexOfLargestAbs(lineItems)` — finds item with largest absolute totalPrice
 
 ### 3.8 `src/receipt/line-item-classifier.ts`
-LLM-based classification of individual receipt line items.
+LLM-based classification of individual receipt line items using structured
+output (JSON schema enforcement).
 
 **Class**: `LineItemClassifier` (default export)
 **Constructor**: `(llmService: LlmService, promptGenerator: PromptGenerator, store: ReceiptStore, receiptTag: string)`
 - Reads and compiles `src/templates/line-item-prompt.hbs` at construction time
+- Defines Zod schema for structured output:
+  ```typescript
+  z.object({
+    items: z.array(z.object({
+      itemIndex: z.number(),
+      type: z.string(),
+      categoryId: z.string(),
+      confidence: z.enum(['high', 'medium', 'low']),
+    })),
+  })
+  ```
 
 **`classifyReceipt(matchId, categories, categoryGroups)`:**
 
@@ -300,16 +323,17 @@ Steps:
 3. Returns early if 0 line items (leaves status as pending)
 4. Builds prompt context: vendorName, date, line items with formatted dollar amounts, additional charges (tip/shipping if non-zero), category groups
 5. Renders Handlebars template
-6. Calls `llmService.askUsingFallbackModel(prompt)` for raw text response
-7. Parses response as JSON array via `cleanJsonResponse()` + `JSON.parse()`; returns on parse failure
-8. Runs `allocateTax()` on receipt line items
-9. Validates receipt balance; adjusts largest item if unbalanced
-10. Inserts line_item_classifications for each item:
+6. Calls `llmService.generateStructuredOutput(prompt, schema)` — uses
+   `generateObject()` from Vercel AI SDK which sends `response_format`
+   with JSON schema to the API, guaranteeing valid structured output
+7. Runs `allocateTax()` on receipt line items
+8. Validates receipt balance; adjusts largest item if unbalanced
+9. Inserts line_item_classifications for each item:
     - Maps LLM results by itemIndex
     - Items with no LLM result or low confidence → classificationType='fallback'
     - Finds category name from categories array
-11. Updates match status to 'classified'
-12. Logs summary with confidence breakdown
+10. Updates match status to 'classified'
+11. Logs summary with confidence breakdown
 
 **`formatCents(cents)`:** converts 250 → "$2.50", -100 → "-$1.00"
 
@@ -370,12 +394,15 @@ Barrel exports for the entire receipt module:
 - All types from `./types`
 
 ### 3.12 `src/templates/line-item-prompt.hbs`
-Handlebars template for line-item LLM classification. Follows the same style as the existing `prompt.hbs`. Includes:
+Handlebars template for line-item LLM classification. Used with structured
+output (`generateObject()` + Zod schema) — the response format is enforced
+by the JSON schema, not by prompt instructions. The prompt provides context:
 - Vendor name, date, account context
 - Numbered line items with description, quantity, unit price, total price
 - Optional additional charges section
 - Full category group listing with IDs
-- Expected JSON array response format with itemIndex, type, categoryId, confidence
+- Example response in `{ items: [...] }` wrapper format
+- Classification instructions for high/medium/low confidence
 
 ---
 
@@ -712,21 +739,24 @@ src/receipt/index.ts                  — Barrel exports
 src/templates/line-item-prompt.hbs    — Handlebars template for LLM
 ```
 
-### Modified Files (7)
+### Modified Files (9)
 ```
 src/config.ts                         — 10 new env vars, 3 feature flags, dependency validation
 src/container.ts                      — 7 new service instantiations, 6 new exports
 app.ts                                — Receipt fetch+match in pipeline, web server callbacks
 src/actual-api-service.ts             — 3 new methods (getById, delete, importWithSplits)
 src/types.ts                          — Interface updates for new API methods
+src/llm-service.ts                    — generateStructuredOutput() with Zod schema
+src/utils/json-utils.ts               — cleanJsonResponse: comment stripping, trailing comma removal
 src/web/server.ts                     — 16 new API endpoints, 6 new callback deps
 tests/test-doubles/in-memory-actual-api-service.ts — Stub methods for test compilation
 ```
 
-### Existing Docs (updated earlier in session)
+### Docs
 ```
-docs/RECEIPT-INTEGRATION-REQUIREMENTS.md  — Full spec (1063 lines)
-docs/RECEIPT-INTEGRATION-PLAN.md          — Implementation plan with checklists
+docs/RECEIPT-INTEGRATION-REQUIREMENTS.md  — Full spec with fallback pipeline (Section 5.5)
+docs/RECEIPT-INTEGRATION-PLAN.md          — Implementation plan (Phases 1-9, including Phase 5.5)
+docs/RECEIPT-INTEGRATION-STATE.md         — This document
 CLAUDE.md                                 — Project overview
 ```
 
@@ -747,9 +777,9 @@ Receipt module tests added (2026-03-12):
 
 The `.env` file in the project root contains all necessary credentials:
 ```
-VERYFI_USERNAME=dougmortensen@outlook.com
-VERYFI_PASSWORD=V20062016i$
-VERYFI_TOTP_SECRET=MPEI36EBSG37SQPPYOBDGA7HVDVZOHPK
+VERYFI_USERNAME=<email>
+VERYFI_PASSWORD=<password>
+VERYFI_TOTP_SECRET=<base32 TOTP secret>
 ```
 
 These are protected by:
