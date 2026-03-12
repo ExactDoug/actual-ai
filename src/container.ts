@@ -38,6 +38,7 @@ import {
   receiptAutoMatch,
   receiptConnectors,
   receiptDateToleranceDays,
+  receiptFallbackWebSearch,
   receiptFetchDaysBack,
   receiptMatchToleranceCents,
   receiptTag,
@@ -206,6 +207,8 @@ const lineItemClassifier = new LineItemClassifier(
   promptGenerator,
   receiptStore,
   receiptTag,
+  toolService,
+  receiptFallbackWebSearch,
 );
 
 const splitTransactionService = new SplitTransactionService(

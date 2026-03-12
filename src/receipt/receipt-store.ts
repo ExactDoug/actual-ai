@@ -394,6 +394,28 @@ class ReceiptStore {
     return result.changes > 0;
   }
 
+  updateLineItemClassification(id: string, updates: {
+    suggestedCategoryId?: string;
+    suggestedCategoryName?: string;
+    classificationType?: string;
+    confidence?: string;
+    notes?: string;
+  }): boolean {
+    const fields: string[] = [];
+    const values: unknown[] = [];
+    if (updates.suggestedCategoryId !== undefined) { fields.push('suggestedCategoryId = ?'); values.push(updates.suggestedCategoryId); }
+    if (updates.suggestedCategoryName !== undefined) { fields.push('suggestedCategoryName = ?'); values.push(updates.suggestedCategoryName); }
+    if (updates.classificationType !== undefined) { fields.push('classificationType = ?'); values.push(updates.classificationType); }
+    if (updates.confidence !== undefined) { fields.push('confidence = ?'); values.push(updates.confidence); }
+    if (updates.notes !== undefined) { fields.push('notes = ?'); values.push(updates.notes); }
+    if (fields.length === 0) return false;
+    values.push(id);
+    const result = this.db.prepare(
+      `UPDATE line_item_classifications SET ${fields.join(', ')} WHERE id = ?`,
+    ).run(...values);
+    return result.changes > 0;
+  }
+
   deleteClassificationsForMatch(matchId: string): number {
     const result = this.db.prepare(
       'DELETE FROM line_item_classifications WHERE receiptMatchId = ?',

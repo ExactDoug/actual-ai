@@ -4,7 +4,7 @@
 **Branch**: `feature/receipt-integration`
 **Depends on**: Veryfi TypeScript client (`src/veryfi/`) — complete
 
-**Last updated**: 2026-03-12
+**Last updated**: 2026-03-12 (Phase 5.5 complete)
 
 ---
 
@@ -130,7 +130,7 @@ fetched receipts in SQLite.
 
 ---
 
-## Phase 5.5: Fallback Classification Pipeline ⬜ NOT STARTED
+## Phase 5.5: Fallback Classification Pipeline ✅ COMPLETE
 
 Implement the multi-tier fallback chain for low-confidence line items.
 Currently, items classified with `confidence: "low"` are tagged as
@@ -266,17 +266,27 @@ needs to accept `ToolService` as an additional dependency.
 
 ### 5.5.9 — Deliverables & Verification
 
-- [ ] Fallback prompt template created (`line-item-fallback-prompt.hbs`)
-- [ ] Search query builder handles OCR artifact cleanup
-- [ ] Tier 1: web search + individual LLM upgrades low→high/medium
-- [ ] Tier 2: rules engine matches item descriptions
-- [ ] Tier 3: majority category assignment from same-receipt items
-- [ ] Tier 4: items left for manual review with clear `notes` breadcrumb
-- [ ] 1-2 item receipt special case falls back to whole-transaction pipeline
-- [ ] `RECEIPT_FALLBACK_WEB_SEARCH=false` skips Tier 1
-- [ ] Each fallback tier logged with item index and outcome
-- [ ] `notes` column populated with fallback path for debugging
-- [ ] Unit tests for search query builder and tier progression
+- [x] Fallback prompt template created (`line-item-fallback-prompt.hbs`)
+- [x] Search query builder handles OCR artifact cleanup
+- [x] Tier 1: web search + individual LLM upgrades low→high/medium
+- [x] Tier 2: rules engine matches item descriptions
+- [x] Tier 3: majority category assignment from same-receipt items
+- [x] Tier 4: items left for manual review with clear `notes` breadcrumb
+- [x] 1-2 item receipt special case falls back to whole-transaction pipeline
+- [x] `RECEIPT_FALLBACK_WEB_SEARCH=false` skips Tier 1
+- [x] Each fallback tier logged with item index and outcome
+- [x] `notes` column populated with fallback path for debugging
+- [x] Unit tests for search query builder and tier progression
+
+**Files created**: `src/templates/line-item-fallback-prompt.hbs`
+
+**Files modified**: `src/receipt/line-item-classifier.ts` (fallback pipeline),
+`src/receipt/receipt-store.ts` (updateLineItemClassification),
+`src/config.ts` (receiptFallbackWebSearch),
+`src/container.ts` (toolService wiring),
+`app.ts` (rules fetching for classifier)
+
+**Tests**: 10 tests in `tests/line-item-classifier.test.ts`
 
 ---
 
@@ -592,9 +602,9 @@ Test the full pipeline with real data before production deployment.
 ## Implementation Order
 
 ```
-Phases 1-5 ✅ COMPLETE
+Phases 1-5.5 ✅ COMPLETE
      |
-     ├── Phase 5.5: Fallback Classification Pipeline
+     ├── Phase 5.5: Fallback Classification Pipeline ✅
      |     (web search + individual LLM, rules, majority, manual review)
      |     (should be implemented before batch ops, since batch classify
      |      needs to run the fallback chain automatically)

@@ -51,6 +51,7 @@ export const receiptDateToleranceDays = Number.parseInt(process.env.RECEIPT_DATE
 export const receiptAutoMatch = process.env.RECEIPT_AUTO_MATCH !== 'false';
 export const receiptFetchDaysBack = Number.parseInt(process.env.RECEIPT_FETCH_DAYS_BACK ?? '30', 10);
 export const receiptTag = process.env.RECEIPT_TAG ?? '#actual-ai-receipt';
+export const receiptFallbackWebSearch = process.env.RECEIPT_FALLBACK_WEB_SEARCH !== 'false';
 export interface FeatureFlag {
   enabled: boolean;
   defaultValue: boolean;

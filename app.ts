@@ -19,8 +19,9 @@ import {
 } from './src/container';
 import ClassificationStore from './src/web/classification-store';
 import { createWebServer } from './src/web/server';
-import type { UnifiedResponse, APICategoryEntity, APICategoryGroupEntity } from './src/types';
+import type { UnifiedResponse, APICategoryEntity, APICategoryGroupEntity, RuleDescription } from './src/types';
 import type { TransactionEntity } from '@actual-app/api/@types/loot-core/src/types/models';
+import { transformRulesToDescriptions } from './src/utils/rule-utils';
 
 const REVIEW_UI_PORT = parseInt(process.env.REVIEW_UI_PORT ?? '3000', 10);
 const REVIEW_UI_ENABLED = process.env.REVIEW_UI_ENABLED !== 'false';
@@ -233,6 +234,8 @@ if (REVIEW_UI_ENABLED) {
         const apiService = await createTempApiService();
         try {
           const groups = await apiService.getCategoryGroups();
+          const payees = await apiService.getPayees();
+          const rules = await apiService.getRules();
           const flatCats: { id: string; name: string; group?: string }[] = [];
           const groupsForPrompt: { id: string; name: string; categories: { id: string; name: string }[] }[] = [];
           for (const group of groups) {
@@ -245,8 +248,9 @@ if (REVIEW_UI_ENABLED) {
             }
             groupsForPrompt.push({ id: group.id ?? '', name: group.name ?? '', categories: cats });
           }
+          const ruleDescriptions = transformRulesToDescriptions(rules, groups, payees);
           await apiService.shutdown();
-          await lineItemClassifier.classifyReceipt(matchId, flatCats, groupsForPrompt);
+          await lineItemClassifier.classifyReceipt(matchId, flatCats, groupsForPrompt, ruleDescriptions);
         } catch (err) {
           await apiService.shutdown();
           throw err;

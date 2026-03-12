@@ -1,20 +1,20 @@
 # Receipt Integration — Current State Document
 
-**Date**: 2026-03-12
+**Date**: 2026-03-12 (updated: Phase 5.5 complete)
 **Branch**: `feature/receipt-integration`
 **Base**: `master`
 **PR**: [#2](https://github.com/ExactDoug/actual-ai/pull/2) (open)
-**Commits on branch**: 14 (from `6010f7f` through `19a64c3`)
+**Commits on branch**: 14+ (from `6010f7f` through latest)
 
 ---
 
 ## 1. Executive Summary
 
 The receipt/OCR integration for actual-ai has been fully implemented across
-Phases 1-5 of the plan, with line-item classification live-tested against
+Phases 1-5.5 of the plan, with line-item classification live-tested against
 real receipt data. The implementation adds 11 new TypeScript files in
-`src/receipt/`, 1 Handlebars prompt template, and modifies 9 existing files.
-All 213 tests pass across 35 test suites. The full `npm run build` succeeds
+`src/receipt/`, 2 Handlebars prompt templates, and modifies 9 existing files.
+All 276 tests pass across 39 test suites. The full `npm run build` succeeds
 with zero errors.
 
 The system can now:
@@ -404,6 +404,14 @@ by the JSON schema, not by prompt instructions. The prompt provides context:
 - Example response in `{ items: [...] }` wrapper format
 - Classification instructions for high/medium/low confidence
 
+### 3.13 `src/templates/line-item-fallback-prompt.hbs`
+Handlebars template for single-item fallback classification (Tier 1). Includes:
+- Vendor name, date, specific item to classify
+- Web search results (when available)
+- Other items on the same receipt with their classifications (context)
+- Full category group listing with IDs
+- Uses same structured output schema as batch classification
+
 ---
 
 ## 4. Modified Files
@@ -420,6 +428,7 @@ by the JSON schema, not by prompt instructions. The prompt provides context:
 - `receiptAutoMatch` — from `RECEIPT_AUTO_MATCH`, default true (string !== 'false')
 - `receiptFetchDaysBack` — from `RECEIPT_FETCH_DAYS_BACK`, default 30
 - `receiptTag` — from `RECEIPT_TAG`, default '#actual-ai-receipt'
+- `receiptFallbackWebSearch` — from `RECEIPT_FALLBACK_WEB_SEARCH`, default true
 
 **New feature flags (registered in `registerReceiptFeatures()`):**
 - `receiptMatching` — enables the receipt matching pipeline
@@ -678,15 +687,6 @@ Any state → (no match) (unmatch; rollback if applied)
 
 ### 8.3 Not Yet Implemented
 
-- **Fallback classification pipeline**: Low-confidence items from the primary
-  batch classification are tagged as `classificationType: "fallback"` but no
-  secondary classification runs. The multi-tier fallback chain (web search +
-  individual LLM → rules → majority category → manual review) is specced in
-  Section 5.5 of RECEIPT-INTEGRATION-REQUIREMENTS.md and planned as Phase 5.5
-  in RECEIPT-INTEGRATION-PLAN.md. This should be implemented before batch
-  operations (Phase 6) since batch classify needs to trigger the fallback
-  chain automatically.
-
 - **Batch operations**: No batch API endpoints for classify, approve, apply, unmatch, or reclassify. Each operation is individual only. See Phase 6 in RECEIPT-INTEGRATION-PLAN.md.
 
 - **Review UI HTML views**: The `renderer.ts` file has not been updated with receipt-specific HTML pages. The API endpoints are all functional, but there are no rendered views. See Phase 7 in RECEIPT-INTEGRATION-PLAN.md. UI must support filtering by any criteria, selecting individual or multiple items, and triggering any available action on the selection.
@@ -723,7 +723,7 @@ Any state → (no match) (unmatch; rollback if applied)
 
 ## 9. File Inventory Summary
 
-### New Files (12)
+### New Files (13)
 ```
 src/receipt/types.ts                  — TypeScript interfaces
 src/receipt/connector-registry.ts     — Provider registry
@@ -732,11 +732,12 @@ src/receipt/receipt-store.ts          — SQLite persistence (4 tables, 1 view)
 src/receipt/receipt-fetch-service.ts  — Fetch-and-store orchestrator
 src/receipt/matching-service.ts       — Multi-signal matching algorithm
 src/receipt/tax-allocator.ts          — Tax distribution with rounding
-src/receipt/line-item-classifier.ts   — LLM classification + tax allocation
+src/receipt/line-item-classifier.ts   — LLM classification + tax allocation + fallback pipeline
 src/receipt/split-plan-builder.ts     — Classifications → split plan
 src/receipt/split-transaction-service.ts — Delete+re-create with rollback
 src/receipt/index.ts                  — Barrel exports
-src/templates/line-item-prompt.hbs    — Handlebars template for LLM
+src/templates/line-item-prompt.hbs    — Handlebars template for batch LLM classification
+src/templates/line-item-fallback-prompt.hbs — Handlebars template for single-item fallback
 ```
 
 ### Modified Files (9)
@@ -764,12 +765,13 @@ CLAUDE.md                                 — Project overview
 
 ## 10. Test Status
 
-**All 213 tests pass across 35 test suites.**
+**All 276 tests pass across 39 test suites.**
 
 Receipt module tests added (2026-03-12):
 - `tests/tax-allocator.test.ts` — 14 tests (proportional allocation, taxable flags, rounding, edge cases)
 - `tests/matching-service.test.ts` — 28 tests (confidence levels, YYYYMMDD dates, vendor normalization, apostrophe stripping, payee resolution, conflict resolution, unmatch/rematch, overridesExisting flag)
 - `tests/split-plan-builder.test.ts` — 9 tests (approved filtering, additional charges, fallback categories, rounding)
+- `tests/line-item-classifier.test.ts` — 10 tests (cleanDescription OCR cleanup, buildSearchQuery formatting)
 
 ---
 
@@ -804,7 +806,7 @@ See `docs/RECEIPT-INTEGRATION-PLAN.md` for the full plan. Summary:
 - [x] ~~Live test Veryfi fetch~~ — 31 receipts fetched
 - [x] ~~Fix matching bugs~~ — date parsing, vendor normalization, payee resolution
 - [x] ~~Retroactive matching~~ — already-categorized transactions with overridesExisting flag
-- [ ] **Phase 5.5**: Fallback classification pipeline (web search + individual LLM, rules, majority category, manual review)
+- [x] ~~**Phase 5.5**: Fallback classification pipeline~~ — 4-tier fallback (web search + LLM, rules, majority category, manual review) + 1-2 item receipt special case
 - [ ] **Phase 6**: Batch operations (batch classify, approve, apply, unmatch, reclassify)
 - [ ] **Phase 7**: Review UI receipt views (filtering, selection, bulk actions)
 - [ ] **Phase 8**: Live testing (LLM classification, fallback chain, split apply/rollback, end-to-end)
