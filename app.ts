@@ -344,8 +344,12 @@ async function fetchClassificationContext() {
 
 // Helper to create a temporary API connection for applying classifications
 async function createTempApiService(): Promise<typeof actualApiClient> {
+  const applyDir = dataDir + 'apply/';
+  if (!fs.existsSync(applyDir)) {
+    fs.mkdirSync(applyDir, { recursive: true });
+  }
   await actualApiClient.init({
-    dataDir: dataDir + 'apply/',
+    dataDir: applyDir,
     serverURL,
     password,
   });
