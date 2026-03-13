@@ -160,6 +160,8 @@ class LineItemClassifier {
       unitPrice: formatCents(item.unitPrice),
       hasUnitPrice: item.unitPrice !== 0,
       totalPrice: formatCents(item.totalPrice),
+      taxed: item.taxable === true,
+      taxExempt: item.taxable === false,
     }));
 
     const additionalCharges: Array<{ type: string; description: string; amount: string }> = [];

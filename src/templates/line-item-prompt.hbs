@@ -6,8 +6,13 @@ Account: {{accountName}}
 
 Receipt line items:
 {{#each lineItems}}
-{{incIndex @index}}. {{description}} — qty {{quantity}}{{#if hasUnitPrice}} @ {{unitPrice}}{{/if}} — {{totalPrice}}
+{{incIndex @index}}. {{description}} — qty {{quantity}}{{#if hasUnitPrice}} @ {{unitPrice}}{{/if}} — {{totalPrice}}{{#if taxed}} [TAXED]{{/if}}{{#if taxExempt}} [TAX-EXEMPT]{{/if}}
 {{/each}}
+
+Tax hint: This receipt is from New Mexico. Items marked [TAX-EXEMPT] are
+untaxed groceries/food. Items marked [TAXED] are non-grocery products
+(household goods, gifts, prepared food, etc.) — do NOT categorize taxed
+items as Groceries.
 
 {{#if additionalCharges}}
 Additional charges:
