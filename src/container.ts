@@ -40,7 +40,10 @@ import {
   receiptDateToleranceDays,
   receiptFallbackWebSearch,
   receiptFetchDaysBack,
+  receiptFuzzyMatchThreshold,
   receiptMatchToleranceCents,
+  receiptMaxDateGapDays,
+  receiptStructuralToleranceDays,
   receiptTag,
   serverURL,
   valueSerpApiKey,
@@ -201,6 +204,9 @@ const matchingService = new MatchingService(
   receiptMatchToleranceCents,
   receiptDateToleranceDays,
   receiptAutoMatch,
+  receiptStructuralToleranceDays,
+  receiptMaxDateGapDays,
+  receiptFuzzyMatchThreshold,
 );
 
 const lineItemClassifier = new LineItemClassifier(
