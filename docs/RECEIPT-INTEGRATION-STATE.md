@@ -4,9 +4,9 @@
 **Branch**: `feature/receipt-integration`
 **Base**: `master`
 **PR**: [#2](https://github.com/ExactDoug/actual-ai/pull/2) (open)
-**Commits on branch**: 22 (from `6010f7f` through `68be8f9`)
+**Commits on branch**: 35 (from `6010f7f` through `664e9b7`)
 **Deployed**: Yes — running on dh01 as `actual-ai` container
-**Image**: `hr01.exactpartners.com/apps/actual-ai:latest` (digest `sha256:23a1a386...`)
+**Image**: `hr01.exactpartners.com/apps/actual-ai:feature-receipt-integration`
 **FQDN**: `actual-ai.dandelionfieldsnm.com` (Caddy reverse proxy on dh01)
 
 ---
@@ -42,6 +42,19 @@ completely dormant unless explicitly enabled.
 ## 2. Branch & Commit History
 
 ```
+664e9b7 fix: correct boolean binding in updateLineItemClassification for SQLite
+9be07b0 fix: reconcile tax allocation after fallback pipeline changes categories
+11343de fix: infer taxability from LLM category assignments for tax allocation
+9228b93 fix: remove per-item taxability inference, pass receipt tax total instead
+e09ebbb fix: add OTC medicine taxability note to LLM prompt
+349c935 fix: restore detailed classification instructions and JSON example
+f69f083 refactor: condense LLM prompt to reduce token usage
+630277b feat: add prescription medicine tax hint to LLM prompt
+0ad3deb feat: pass taxability as classification hint to LLM prompt
+647d7c2 fix: default to taxable=true when Veryfi type field is missing
+68fb99e fix: infer line-item taxability from Veryfi type field
+a6e5b32 fix: display totalPrice instead of unitPrice in receipt detail view
+068f5f1 fix: auto-promote match status when all line items approved individually
 68be8f9 feat: single-item category apply + apply button pulse animation
 6af9657 docs: update plan with Phase 7 complete status
 bf879db fix: ensure apply/ data dir exists before Actual Budget API init
@@ -121,9 +134,16 @@ Actual Budget API → Transaction Fetch → Matching Service
                                               ↓
                               Line Item Classifier (LLM)
                                               ↓
+                        Infer taxability from category names
+                        (NM rules: groceries/Rx exempt)
+                                              ↓
+                        Tax allocation (taxable items only)
+                                              ↓
                               Line Item Classifications (SQLite)
                                               ↓
                               Fallback Pipeline (4 tiers)
+                                              ↓
+                        Tax reconciliation (re-infer + reallocate)
                                               ↓
                      Review UI → Approve/Reject → Apply
                                               ↓
@@ -136,6 +156,7 @@ Actual Budget API → Transaction Fetch → Matching Service
 2. **Receipt pipeline is independent of dryRun**: The `dryRun` flag gates the standard transaction classifier. The receipt pipeline has its own approval gate (classify → approve → apply) and only writes to Actual Budget when the user explicitly clicks Apply.
 3. **Single-item optimization**: Receipts with 1 line item just update the transaction category directly instead of the delete/reimport split flow
 4. **Structured output**: LLM classification uses `generateObject()` with Zod schema, guaranteeing valid JSON responses with correct types
+5. **Post-LLM tax inference**: Veryfi's per-item `type` field is unreliable (e.g., greeting cards typed as "food"). Instead, taxability is inferred from the LLM's category assignments using NM rules: categories matching `/^(groceries|medical|health|pharmacy|prescription)/i` are tax-exempt. Tax is reconciled again after the fallback pipeline, which may change categories.
 
 ---
 
@@ -261,10 +282,40 @@ Summary stat cards (total, matched, unmatched, by status) and quick actions.
 
 ## 8. Known Issues & Bugs
 
-### FIXED: Match status not promoted on individual line item approval
+### FIXED: Tax reconciliation not updating after fallback pipeline (664e9b7)
+
+**Severity**: Was causing incorrect tax allocation on reclassified items
+**Root cause**: `updateLineItemClassification()` pushed raw JS booleans (`false`/`true`)
+for the `taxable` column instead of converting to `0`/`1` for SQLite. The insert method
+did the conversion correctly but the update method did not. This caused `reconcileTax()`
+to silently fail to clear tax from items reclassified as tax-exempt (e.g., Groceries)
+by the Tier 3 fallback pipeline.
+**Fix**: Convert boolean → `0`/`1` in `updateLineItemClassification()`, matching the
+pattern already used in `insertLineItemClassification()`. Added diagnostic logging
+to `reconcileTax()` for future debugging.
+
+### FIXED: NM tax rules not applied to line items (9be07b0, 11343de)
+
+**Severity**: All items received proportional tax, including tax-exempt groceries
+**Root cause**: Veryfi's per-item `type` field is unreliable at mixed-merchandise stores
+(e.g., greeting cards typed as "food" at Albertsons). Initial approach of inferring
+taxability from Veryfi data was abandoned.
+**Fix**: Two-step approach — (1) LLM prompt includes NM tax context ("groceries and Rx
+are tax-exempt") so it can make informed category decisions, (2) after LLM assigns
+categories, taxability is inferred from category names using regex
+`/^(groceries|medical|health|pharmacy|prescription)/i`. Tax is allocated only to
+taxable items. If all items appear tax-exempt but receipt has tax, falls back to
+proportional allocation (assumes misclassification).
+
+### FIXED: Match status not promoted on individual line item approval (068f5f1)
 
 **Severity**: Was blocking apply workflow
 **Fix**: `PATCH /api/line-items/:id` now checks if all line items for the match are approved after each status update. If so, auto-promotes the match status to `'approved'`. Added `getLineItemClassification()` to receipt-store for retrieving the line item's `receiptMatchId`.
+
+### FIXED: Price column showing $0.00 for most items (a6e5b32)
+
+**Severity**: Cosmetic — line items showed `unitPrice` (Veryfi's `price`, zero 84% of the time)
+**Fix**: Changed receipt detail view to display `totalPrice` (Veryfi's `total`) instead.
 
 ### FIXED: Container crash loop on startup (bf879db)
 
@@ -273,6 +324,14 @@ Summary stat cards (total, matched, unmatched, by status) and quick actions.
 ### FIXED: Jest double-counting tests (906171a)
 
 `npm run build` compiled test files into `dist/`, and jest picked them up as additional test files. Fixed by adding `testPathIgnorePatterns: ['/dist/']` to jest config. True count: 175 tests / 22 suites (was reported as 302/41).
+
+### OPEN: LLM classification accuracy for ambiguous items
+
+**Severity**: Low — items like "BLMNG UPGRADE 6"" (bakery bloom upgrade) get
+classified as non-grocery by LLM, then Tier 3 fallback assigns majority category
+(Groceries). The tax reconciliation now handles this correctly, but the initial
+LLM classification could be improved with SERP context (Tier 1 fallback not
+enabled — `webSearch` / `freeWebSearch` feature flags not set in production).
 
 ---
 

@@ -153,10 +153,13 @@ interface ReceiptLineItem {
   sku?: string;
 
   /** Whether this item is taxable. null = unknown.
-   *  Veryfi does not have a boolean taxable field — the adapter
-   *  cannot reliably infer taxability from line-item data because
-   *  line-item tax is always 0 in Veryfi. Default to null (unknown)
-   *  and let tax allocation treat all items as taxable. */
+   *  Veryfi does not have a boolean taxable field and its `type` field
+   *  is unreliable at mixed-merchandise stores (e.g., greeting cards
+   *  typed as "food" at grocery stores). The adapter sets this to null.
+   *  Taxability is inferred AFTER LLM classification from the assigned
+   *  category name using NM tax rules: categories matching
+   *  /^(groceries|medical|health|pharmacy|prescription)/i are exempt.
+   *  Tax is reconciled again after the fallback pipeline. */
   taxable?: boolean | null;
 
   /** Provider-specific category/type guess (informational).
@@ -218,7 +221,7 @@ class VeryfiConnector implements ReceiptConnector {
 | `line_items[].total` | `lineItems[].totalPrice` | `Math.round(total * 100)`. This is the canonical amount — NOT price |
 | `line_items[].total / quantity` | `lineItems[].unitPrice` | Derived. Do NOT use `line_items[].price` (zero on 84% of items) |
 | `line_items[].sku` | `lineItems[].sku` | 42% populated |
-| *(not available)* | `lineItems[].taxable` | Always set to `null` — Veryfi line-item `tax` is always 0 |
+| *(not available)* | `lineItems[].taxable` | Always `null` from Veryfi — `type` field unreliable at mixed-merchandise stores. Taxability inferred post-LLM from category names (NM rules). |
 | `line_items[].type` | `lineItems[].providerCategory` | food (71%), product (17%), fuel (6%) |
 | `tax` | `tax.totalTax` | `Math.round(tax * 100)` |
 | `tax_lines` | `tax.taxLines` | Only 16% populated |
@@ -466,8 +469,35 @@ tax.
 
 1. **Distribute discount** across items proportionately (reduces each
    item's totalPrice). This happens BEFORE tax allocation.
-2. **Allocate tax** on the discounted amounts.
-3. **Add tip/shipping/fee** as separate subtransactions (NOT distributed).
+2. **Infer taxability** from LLM category assignments (see below).
+3. **Allocate tax** on the discounted amounts (taxable items only).
+4. **Add tip/shipping/fee** as separate subtransactions (NOT distributed).
+5. **Reconcile tax** after fallback pipeline (which may change categories).
+
+**Taxability inference (NM rules):**
+
+After the LLM classifies each line item into a category, taxability is
+inferred from the assigned category name:
+- Categories matching `/^(groceries|medical|health|pharmacy|prescription)/i`
+  → tax-exempt (`taxable = false`)
+- All other categories → taxable (`taxable = true`)
+- Unclassified items (`suggestedCategoryName` is null) → unknown (`taxable = null`)
+
+Edge case: if ALL items are tax-exempt but the receipt has non-zero tax,
+this indicates a likely misclassification. Fall back to proportional
+allocation across all items (set all `taxable` flags to `null`).
+
+**Tax reconciliation after fallback:**
+
+The fallback pipeline (Tiers 1-4) may change item categories after the
+initial tax allocation. After the fallback pipeline completes, `reconcileTax()`
+re-reads the final categories from the database, re-infers taxability, and
+re-runs the tax allocator. Only items whose `allocatedTax` or `amountWithTax`
+changed are updated in the database.
+
+Note: The `taxable` column in SQLite is INTEGER (1, 0, or NULL). When
+updating, boolean values MUST be converted to 0/1 — raw JS booleans
+cause silent binding failures in better-sqlite3.
 
 **Tax allocation algorithm:**
 
@@ -579,8 +609,13 @@ Account: {{accountName}}
 
 Receipt line items:
 {{#each lineItems}}
-{{incIndex @index}}. {{description}} — qty {{quantity}} @ {{unitPrice}} = {{totalPrice}}
+{{incIndex @index}}. {{description}} — qty {{quantity}}{{#if hasUnitPrice}} @ {{unitPrice}}{{/if}} — {{totalPrice}}
 {{/each}}
+{{#if receiptTax}}Receipt tax total: {{receiptTax}}{{/if}}
+
+NM tax: groceries and Rx are tax-exempt; all other items are taxed.
+Use item descriptions to determine which are groceries vs non-grocery
+(gifts, household goods, prepared food, OTC medicine, etc.).
 
 {{#if additionalCharges}}
 Additional charges:
@@ -616,6 +651,12 @@ Example response for a 2-item receipt:
   ]
 }
 ```
+
+The prompt includes NM-specific tax context so the LLM can make informed
+category decisions. The receipt tax total and a brief NM tax rule summary
+help the LLM distinguish groceries from non-grocery items at mixed-merchandise
+stores. After classification, taxability is inferred from the assigned
+category names (see Section 5.2).
 
 The prompt provides context and examples, but the response format is
 enforced by the JSON schema — not by prompt instructions alone.

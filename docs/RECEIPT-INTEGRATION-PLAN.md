@@ -4,7 +4,7 @@
 **Branch**: `feature/receipt-integration`
 **Depends on**: Veryfi TypeScript client (`src/veryfi/`) — complete
 
-**Last updated**: 2026-03-12 (Phase 5.5 complete)
+**Last updated**: 2026-03-13 (tax reconciliation fix)
 
 ---
 
@@ -74,6 +74,9 @@ fetched receipts in SQLite.
 - [x] LLM-based classification of individual line items
 - [x] Low-confidence items tagged as `classificationType: "fallback"`
 - [x] Classifications stored in `line_item_classifications` table
+- [x] Post-LLM taxability inference from category names (NM rules: groceries
+  and Rx tax-exempt, all other items taxed)
+- [x] Tax reconciliation after fallback pipeline changes categories
 
 **Live-verified (2026-03-12):**
 - [x] Albertsons (7 items): 5 high, 2 low confidence — groceries classified correctly
@@ -559,13 +562,26 @@ Test the full pipeline with real data before production deployment.
 ### 8.4.1 — Fallback Classification Pipeline
 
 - [ ] Tier 1: web search + individual LLM upgrades a low-confidence item
+  (SERP not enabled in production — neither `webSearch` nor `freeWebSearch` feature flags set)
 - [ ] Search query includes item description + vendor name
 - [ ] Fallback prompt includes search results and receipt context
 - [ ] Tier 2: rules engine matches an item description to a rule
-- [ ] Tier 3: majority category assigned when other items are classified
+- [x] Tier 3: majority category assigned when other items are classified
+  (verified: BLMNG UPGRADE 6" → Groceries via majority at Albertsons)
 - [ ] 1-2 item receipt special case uses whole-transaction pipeline
-- [ ] `notes` column records fallback path for each item
+- [x] `notes` column records fallback path for each item
+  (verified: `fallback:tier3:majority-category` in DB)
 - [ ] `RECEIPT_FALLBACK_WEB_SEARCH=false` correctly skips Tier 1
+
+### 8.4.2 — Tax Reconciliation After Fallback
+
+- [x] Post-LLM taxability inferred from category names
+  (groceries/Rx → tax-exempt, all other → taxable)
+- [x] Tax recomputed after fallback pipeline changes categories
+- [x] `reconcileTax()` correctly updates allocatedTax, amountWithTax, taxable
+  (verified: Albertsons item 6 "Groceries" → taxable=0, allocatedTax=0)
+- [x] All-exempt edge case falls back to proportional allocation
+- [x] Balance discrepancy adjustment applied after reconciliation
 
 ### 8.5 — Split Transaction Verification
 
