@@ -243,7 +243,14 @@ if (REVIEW_UI_ENABLED) {
       : undefined,
 
     onReceiptApplySplit: isFeatureEnabled('receiptMatching')
-      ? (matchId: string) => splitTransactionService.applySplit(matchId)
+      ? async (matchId: string) => {
+        const apiService = await createTempApiService();
+        try {
+          await splitTransactionService.applySplit(matchId);
+        } finally {
+          await apiService.shutdown();
+        }
+      }
       : undefined,
 
     onReceiptUnmatch: isFeatureEnabled('receiptMatching')
@@ -255,7 +262,14 @@ if (REVIEW_UI_ENABLED) {
       : undefined,
 
     onReceiptRollback: isFeatureEnabled('receiptMatching')
-      ? (matchId: string) => splitTransactionService.rollbackSplit(matchId)
+      ? async (matchId: string) => {
+        const apiService = await createTempApiService();
+        try {
+          await splitTransactionService.rollbackSplit(matchId);
+        } finally {
+          await apiService.shutdown();
+        }
+      }
       : undefined,
 
     onBatchClassify: isFeatureEnabled('lineItemClassification')
