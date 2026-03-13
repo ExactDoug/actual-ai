@@ -9,10 +9,13 @@ Receipt line items:
 {{incIndex @index}}. {{description}} — qty {{quantity}}{{#if hasUnitPrice}} @ {{unitPrice}}{{/if}} — {{totalPrice}}{{#if taxed}} [TAXED]{{/if}}{{#if taxExempt}} [TAX-EXEMPT]{{/if}}
 {{/each}}
 
-Tax hint: This receipt is from New Mexico. Items marked [TAX-EXEMPT] are
-untaxed groceries/food. Items marked [TAXED] are non-grocery products
-(household goods, gifts, prepared food, etc.) — do NOT categorize taxed
-items as Groceries.
+Tax hint: This receipt is from New Mexico where gross receipts tax applies.
+- [TAX-EXEMPT] = untaxed groceries/food. Categorize as Groceries or similar.
+- [TAXED] = non-grocery products (household goods, gifts, prepared food,
+  etc.) — do NOT categorize taxed items as Groceries.
+- Prescription medicine is also tax-exempt in NM (but OTC medicine is taxed).
+  At pharmacies (Walgreens, CVS, etc.), items that appear to be prescriptions
+  should be categorized as Medical/Health, not Groceries, even if tax-exempt.
 
 {{#if additionalCharges}}
 Additional charges:
