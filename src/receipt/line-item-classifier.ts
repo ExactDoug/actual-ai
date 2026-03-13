@@ -371,6 +371,12 @@ class LineItemClassifier {
       ? classifications.map(() => null)
       : inferredTaxable;
 
+    console.log(`[reconcileTax] match=${matchId} items=${classifications.length} hasAnyTaxable=${hasAnyTaxable}`);
+    for (let i = 0; i < classifications.length; i++) {
+      const c = classifications[i];
+      console.log(`[reconcileTax]   [${i}] "${c.suggestedCategoryName}" old: taxable=${c.taxable} tax=${c.allocatedTax} → new: taxable=${taxableFlags[i]}`);
+    }
+
     const taxInput = {
       lineItems: classifications.map((c, i) => ({
         totalPrice: c.totalPrice as number,
@@ -398,20 +404,23 @@ class LineItemClassifier {
     }
 
     // Update stored classifications with corrected tax
+    let updated = 0;
     for (let i = 0; i < classifications.length; i++) {
       const c = classifications[i];
       const alloc = taxResult.allocations[i];
       if (c.allocatedTax !== alloc.allocatedTax
         || c.amountWithTax !== alloc.amountWithTax) {
-        this.store.updateLineItemClassification(c.id as string, {
+        const ok = this.store.updateLineItemClassification(c.id as string, {
           allocatedTax: alloc.allocatedTax,
           amountWithTax: alloc.amountWithTax,
           taxable: taxableFlags[i],
         });
+        console.log(`[reconcileTax]   [${i}] update id=${c.id} tax ${c.allocatedTax}→${alloc.allocatedTax} total ${c.amountWithTax}→${alloc.amountWithTax} taxable=${taxableFlags[i]} ok=${ok}`);
+        updated++;
       }
     }
 
-    console.log(`Tax reconciled for match ${matchId} after fallback`);
+    console.log(`Tax reconciled for match ${matchId} after fallback (${updated} items updated)`);
   }
 
   // ---------------------------------------------------------------------------

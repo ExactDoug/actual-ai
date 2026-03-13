@@ -480,7 +480,11 @@ class ReceiptStore {
     if (updates.notes !== undefined) { fields.push('notes = ?'); values.push(updates.notes); }
     if (updates.allocatedTax !== undefined) { fields.push('allocatedTax = ?'); values.push(updates.allocatedTax); }
     if (updates.amountWithTax !== undefined) { fields.push('amountWithTax = ?'); values.push(updates.amountWithTax); }
-    if (updates.taxable !== undefined) { fields.push('taxable = ?'); values.push(updates.taxable); }
+    if (updates.taxable !== undefined) {
+      fields.push('taxable = ?');
+      // Convert boolean → 0/1 for SQLite (matches insertLineItemClassification)
+      values.push(updates.taxable == null ? null : updates.taxable ? 1 : 0);
+    }
     if (fields.length === 0) return false;
     values.push(id);
     const result = this.db.prepare(
