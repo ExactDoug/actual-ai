@@ -294,7 +294,7 @@ export function renderReceiptDetail(
             </tbody>
           </table>
           <div style="margin-top: 0.8rem; display: flex; gap: 0.5rem;">
-            <button class="btn btn-apply" onclick="applySplit()" ${!allApproved ? 'disabled title="All line items must be approved first"' : ''}>Apply Split</button>
+            <button id="applyBtn" class="btn btn-apply" onclick="applySplit()" ${!allApproved ? 'disabled title="All line items must be approved first"' : ''}>${classifications.length === 1 ? 'Apply Category' : 'Apply Split'}</button>
           </div>
         </div>` : ''}
 
@@ -364,8 +364,20 @@ export function renderReceiptDetail(
             const badge = document.querySelector('tr[data-item-id="' + itemId + '"] .badge.pending, tr[data-item-id="' + itemId + '"] .badge.approved, tr[data-item-id="' + itemId + '"] .badge.rejected');
             if (badge) { badge.className = 'badge ' + status; badge.textContent = status; }
             showToast('success', status === 'approved' ? 'Approved' : 'Rejected');
+            nudgeApplyButton();
           }
         } catch (err) { showToast('error', String(err)); }
+      }
+
+      function nudgeApplyButton() {
+        const btn = document.getElementById('applyBtn');
+        if (!btn) return;
+        const badges = document.querySelectorAll('tr[data-item-id] .badge.pending, tr[data-item-id] .badge.approved, tr[data-item-id] .badge.rejected');
+        const allApproved = [...badges].every(b => b.classList.contains('approved'));
+        if (allApproved) { btn.disabled = false; btn.removeAttribute('title'); }
+        btn.classList.remove('btn-attention');
+        void btn.offsetWidth;
+        btn.classList.add('btn-attention');
       }
 
       async function approveAll() {
@@ -642,6 +654,16 @@ function receiptLayout(title: string, content: string, activeNav: string): strin
     .toast { position: fixed; bottom: 1.5rem; right: 1.5rem; background: #252839; border: 1px solid #3a3d52; padding: 0.8rem 1.2rem; border-radius: 6px; font-size: 0.85rem; display: none; z-index: 100; box-shadow: 0 4px 12px rgba(0,0,0,0.3); }
     .toast.success { border-color: #34d399; }
     .toast.error { border-color: #f87171; }
+
+    @keyframes btn-pulse {
+      0% { box-shadow: 0 0 0 0 rgba(96, 165, 250, 0.6); }
+      50% { box-shadow: 0 0 12px 4px rgba(96, 165, 250, 0.3); }
+      100% { box-shadow: 0 0 0 0 rgba(96, 165, 250, 0); }
+    }
+    .btn-attention {
+      animation: btn-pulse 1.5s ease-in-out 2;
+      border: 1px solid #60a5fa;
+    }
   </style>
 </head>
 <body>

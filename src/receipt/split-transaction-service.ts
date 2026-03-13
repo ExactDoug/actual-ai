@@ -88,10 +88,34 @@ class SplitTransactionService {
       (c) => c.status === 'approved',
     );
 
-    // 8. Build additional charges from receipt data
+    // 8. Single-item shortcut: just update category instead of splitting
+    if (approvedClassifications.length === 1) {
+      const cls = approvedClassifications[0];
+      const categoryId = cls.suggestedCategoryId as string | undefined;
+      const taggedNotes = appendTag(
+        transaction.notes ?? '', this.receiptTag,
+      );
+      if (categoryId) {
+        await this.actualApiService.updateTransactionNotesAndCategory(
+          transaction.id, taggedNotes, categoryId,
+        );
+      } else {
+        await this.actualApiService.updateTransactionNotes(
+          transaction.id, taggedNotes,
+        );
+      }
+      this.store.updateMatchStatus(matchId, 'applied');
+      console.log(
+        `Applied category for match ${matchId}: single line item`
+        + ` → ${String(cls.suggestedCategoryName ?? 'uncategorized')}`,
+      );
+      return;
+    }
+
+    // 9. Build additional charges from receipt data
     const additionalCharges = extractAdditionalCharges(receipt);
 
-    // 9. Build the split plan
+    // 10. Build the split plan
     const plan = buildSplitPlan(
       match.transactionId as string,
       approvedClassifications.map((c) => ({
@@ -104,10 +128,10 @@ class SplitTransactionService {
       transaction.amount,
     );
 
-    // 10. Delete the original transaction
+    // 11. Delete the original transaction
     await this.actualApiService.deleteTransaction(transaction.id);
 
-    // 11. Re-create via import with subtransactions
+    // 12. Re-create via import with subtransactions
     await this.actualApiService.importTransactionsWithSplits(
       transaction.account,
       [
@@ -129,10 +153,10 @@ class SplitTransactionService {
       ],
     );
 
-    // 12. Update match status
+    // 13. Update match status
     this.store.updateMatchStatus(matchId, 'applied');
 
-    // 13. Log
+    // 14. Log
     console.log(
       `Applied split for match ${matchId}: ${plan.splits.length} subtransactions`,
     );
