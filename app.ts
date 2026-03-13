@@ -299,6 +299,44 @@ if (REVIEW_UI_ENABLED) {
       ? (request) => batchService.batchReject(request)
       : undefined,
 
+    onResetAndRematch: isFeatureEnabled('receiptMatching')
+      ? async () => {
+        // Step 1: Reset all non-applied matches
+        const { reset, preserved, errors: resetErrors } = batchService.resetForRematch();
+
+        // Step 2: Fetch fresh transactions and re-run matching
+        const tempApi = await createTempApiService();
+        try {
+          const accounts = await tempApi.getAccounts();
+          let transactions: TransactionEntity[] = [];
+          for (const account of accounts) {
+            transactions = transactions.concat(
+              await tempApi.getTransactions(account.id, '1990-01-01', '2030-01-01'),
+            );
+          }
+          const payees = await tempApi.getPayees();
+          const payeeMap = new Map<string, string>();
+          for (const p of payees) {
+            if (p.id && p.name) payeeMap.set(p.id, p.name);
+          }
+          const matchable = transactions.filter((t) => !t.is_parent && t.amount !== 0);
+          const rematchSummary = matchingService.matchAll(matchable.map((t) => ({
+            id: t.id,
+            amount: t.amount,
+            date: t.date,
+            payee: t.payee ? payeeMap.get(t.payee) : undefined,
+            imported_payee: t.imported_payee ?? undefined,
+            hasCategory: !!t.category,
+            categoryId: t.category ?? undefined,
+          })));
+
+          return { reset, preserved, resetErrors, rematchSummary };
+        } finally {
+          await tempApi.shutdown();
+        }
+      }
+      : undefined,
+
     onBatchReclassify: isFeatureEnabled('lineItemClassification')
       ? async (request) => {
         const { flatCats, groupsForPrompt, ruleDescriptions, shutdown } = await fetchClassificationContext();

@@ -33,6 +33,12 @@ export interface WebServerDeps {
   onBatchUnmatch?: (request: BatchRequest) => BatchResponse;
   onBatchReject?: (request: BatchRequest) => BatchResponse;
   onBatchReclassify?: (request: BatchRequest) => Promise<BatchResponse>;
+  onResetAndRematch?: () => Promise<{
+    reset: number;
+    preserved: number;
+    resetErrors: Array<{ matchId: string; error: string }>;
+    rematchSummary: { matched: number; exact: number; probable: number; possible: number; unmatched: number };
+  }>;
   getTransactionDetails?: (transactionId: string) => Promise<{
     date?: string;
     payeeName?: string;
@@ -488,6 +494,21 @@ export function createWebServer(deps: WebServerDeps): express.Express {
       } catch (error) {
         console.error('Batch reclassify error:', error);
         res.status(500).json({ error: 'Batch reclassify failed' });
+      }
+    });
+
+    // --- Reset & Rematch ---
+    app.post('/api/batch/reset-rematch', async (_req: Request, res: Response) => {
+      if (!deps.onResetAndRematch) {
+        res.status(501).json({ error: 'Reset & rematch not configured' });
+        return;
+      }
+      try {
+        const result = await deps.onResetAndRematch();
+        res.json(result);
+      } catch (error) {
+        console.error('Reset & rematch error:', error);
+        res.status(500).json({ error: 'Reset & rematch failed' });
       }
     });
 

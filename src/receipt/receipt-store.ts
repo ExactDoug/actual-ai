@@ -359,6 +359,21 @@ class ReceiptStore {
     ).all(...params) as Record<string, unknown>[];
   }
 
+  getAllResettableMatches(): Record<string, unknown>[] {
+    return this.db.prepare(
+      `SELECT * FROM receipt_matches
+       WHERE NOT (status = 'applied' AND preSplitSnapshot IS NOT NULL)`,
+    ).all() as Record<string, unknown>[];
+  }
+
+  getAppliedWithSnapshotCount(): number {
+    const row = this.db.prepare(
+      `SELECT COUNT(*) as count FROM receipt_matches
+       WHERE status = 'applied' AND preSplitSnapshot IS NOT NULL`,
+    ).get() as { count: number };
+    return row.count;
+  }
+
   setPreSplitSnapshot(matchId: string, snapshot: string): boolean {
     const result = this.db.prepare(
       'UPDATE receipt_matches SET preSplitSnapshot = ? WHERE id = ?',

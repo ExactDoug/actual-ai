@@ -87,6 +87,8 @@ export function renderReceiptQueue(
       <button class="btn btn-apply" onclick="batchAction('apply')">Apply</button>
       <button class="btn btn-reject" onclick="batchAction('reject')">Reject</button>
       <button class="btn" style="background:#3a3d52;color:#ccc;" onclick="batchAction('unmatch')">Unmatch</button>
+      <span style="border-left:1px solid #444;margin:0 0.5rem;"></span>
+      <button class="btn" style="background:#7c2d12;color:#fed7aa;" onclick="resetAndRematch()">Reset &amp; Rematch All</button>
     </div>
 
     <div class="card" style="padding: 0; overflow-x: auto;">
@@ -151,6 +153,36 @@ export function renderReceiptQueue(
             setTimeout(() => location.reload(), 800);
           } else {
             showToast('error', data.error || 'Request failed');
+          }
+        } catch (err) { showToast('error', String(err)); }
+      }
+      async function resetAndRematch() {
+        var msg = 'This will:\\n'
+          + '1. Unmatch ALL non-applied matches\\n'
+          + '2. Re-run matching with the current algorithm\\n\\n'
+          + 'Applied matches (with splits written to Actual Budget) will be PRESERVED.\\n\\n'
+          + 'Are you sure?';
+        if (!confirm(msg)) return;
+        if (!confirm('Final confirmation: Reset and rematch all receipts?')) return;
+        try {
+          showToast('info', 'Resetting and rematching... this may take a moment.');
+          var res = await fetch('/api/batch/reset-rematch', { method: 'POST', headers: { 'Content-Type': 'application/json' } });
+          var data = await res.json();
+          if (res.ok) {
+            var summary = 'Reset: ' + data.reset + ' unmatched'
+              + (data.preserved > 0 ? ', ' + data.preserved + ' preserved (applied)' : '')
+              + '\\nRematched: ' + data.rematchSummary.matched
+              + ' (' + data.rematchSummary.exact + ' exact, '
+              + data.rematchSummary.probable + ' probable, '
+              + data.rematchSummary.possible + ' possible)'
+              + ', ' + data.rematchSummary.unmatched + ' unmatched';
+            if (data.resetErrors && data.resetErrors.length > 0) {
+              summary += '\\n' + data.resetErrors.length + ' errors during reset';
+            }
+            showToast('success', summary);
+            setTimeout(function() { location.reload(); }, 2000);
+          } else {
+            showToast('error', data.error || 'Reset & rematch failed');
           }
         } catch (err) { showToast('error', String(err)); }
       }
