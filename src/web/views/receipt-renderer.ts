@@ -83,6 +83,7 @@ export function renderReceiptQueue(
       <span class="selected-count"><span id="selectedCount">0</span> selected of ${total} total</span>
       <button class="btn btn-primary" onclick="batchAction('classify')">Classify</button>
       <button class="btn btn-approve" onclick="batchAction('approve')">Approve</button>
+      <button class="btn" style="background:#6b5b2d;color:#fde68a;" onclick="batchAction('keep-category')">Keep Category</button>
       <button class="btn btn-apply" onclick="batchAction('apply')">Apply</button>
       <button class="btn btn-reject" onclick="batchAction('reject')">Reject</button>
       <button class="btn" style="background:#3a3d52;color:#ccc;" onclick="batchAction('unmatch')">Unmatch</button>
@@ -96,24 +97,30 @@ export function renderReceiptQueue(
           <th><a href="/receipts${qs({ sortBy: 'confidence', sortDir: filter.sortBy === 'confidence' && filter.sortDir === 'asc' ? 'desc' : 'asc' })}">Confidence</a></th>
           <th>Override</th>
           <th><a href="/receipts${qs({ sortBy: 'vendor', sortDir: filter.sortBy === 'vendor' && filter.sortDir === 'asc' ? 'desc' : 'asc' })}">Vendor</a></th>
+          <th>Payee</th>
           <th><a href="/receipts${qs({ sortBy: 'date', sortDir: filter.sortBy === 'date' && filter.sortDir === 'desc' ? 'asc' : 'desc' })}">Receipt Date</a></th>
+          <th>Tx Date</th>
           <th><a href="/receipts${qs({ sortBy: 'amount', sortDir: filter.sortBy === 'amount' && filter.sortDir === 'desc' ? 'asc' : 'desc' })}">Amount</a></th>
+          <th>Category</th>
           <th>Items</th>
           <th><a href="/receipts${qs({ sortBy: 'matchedAt', sortDir: filter.sortBy === 'matchedAt' && filter.sortDir === 'desc' ? 'asc' : 'desc' })}">Matched</a></th>
         </tr></thead>
         <tbody>
-          ${rows.map((r) => `<tr data-id="${r.id}" onclick="if(event.target.type!=='checkbox')location.href='/receipts/${r.id}'" style="cursor:pointer;">
+          ${rows.map((r) => `<tr data-id="${r.id}" data-tx-id="${r.transactionId}" onclick="if(event.target.type!=='checkbox')location.href='/receipts/${r.id}'" style="cursor:pointer;">
             <td><input type="checkbox" class="row-check" value="${r.id}" onchange="updateCount()"></td>
             <td><span class="badge ${r.status}">${r.status}</span></td>
             <td><span class="badge confidence-${r.matchConfidence}">${r.matchConfidence}</span></td>
             <td>${r.overridesExisting ? '<span title="Will replace existing category" style="color:#fbbf24;">&#9888;</span>' : ''}</td>
             <td>${esc(truncate(String(r.vendorName ?? ''), 30))}</td>
+            <td class="tx-payee" style="color:#666;font-size:0.85rem;">—</td>
             <td>${r.receiptDate ?? ''}</td>
+            <td class="tx-date" style="color:#666;font-size:0.85rem;">—</td>
             <td class="amount negative">${formatAmount(r.totalAmount as number)}</td>
+            <td class="tx-category" style="color:#666;font-size:0.85rem;">—</td>
             <td>${r.lineItemCount ?? 0}</td>
             <td>${formatDate(String(r.matchedAt ?? ''))}</td>
           </tr>`).join('')}
-          ${rows.length === 0 ? '<tr><td colspan="9" style="text-align: center; padding: 2rem; color: #666;">No receipt matches found</td></tr>' : ''}
+          ${rows.length === 0 ? '<tr><td colspan="12" style="text-align: center; padding: 2rem; color: #666;">No receipt matches found</td></tr>' : ''}
         </tbody>
       </table>
     </div>
@@ -154,6 +161,50 @@ export function renderReceiptQueue(
         t.style.display = 'block';
         setTimeout(() => { t.style.display = 'none'; }, 3000);
       }
+
+      // Lazy-load transaction details from Actual Budget
+      (async function() {
+        var rows = document.querySelectorAll('tr[data-tx-id]');
+        if (rows.length === 0) return;
+        var ids = [...new Set([...rows].map(function(r) { return r.dataset.txId; }))];
+        try {
+          var res = await fetch('/api/transactions/bulk-details', {
+            method: 'POST', headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ transactionIds: ids })
+          });
+          if (!res.ok) return;
+          var data = await res.json();
+          rows.forEach(function(row) {
+            var info = data[row.dataset.txId];
+            if (!info) return;
+            var payeeCell = row.querySelector('.tx-payee');
+            var dateCell = row.querySelector('.tx-date');
+            var catCell = row.querySelector('.tx-category');
+            if (payeeCell) {
+              payeeCell.textContent = info.payeeName || info.importedPayee || '';
+              payeeCell.style.color = '#ccc';
+            }
+            if (dateCell) {
+              dateCell.textContent = info.date || '';
+              dateCell.style.color = '#ccc';
+            }
+            if (catCell) {
+              if (info.isParent && info.subtransactions && info.subtransactions.length > 0) {
+                var cats = info.subtransactions.map(function(s) { return s.categoryName || '?'; });
+                var unique = [...new Set(cats)];
+                catCell.innerHTML = '<span style="color:#60a5fa;">Split:</span> ' + unique.join(', ');
+                catCell.style.color = '#ccc';
+              } else if (info.categoryName) {
+                catCell.textContent = info.categoryName;
+                catCell.style.color = '#fbbf24';
+              } else {
+                catCell.textContent = '(none)';
+                catCell.style.color = '#666';
+              }
+            }
+          });
+        } catch (e) { console.error('Failed to load transaction details', e); }
+      })();
     </script>
   `;
   return receiptLayout('Receipt Queue', content, 'queue');
@@ -269,6 +320,9 @@ export function renderReceiptDetail(
           <h2>Matched Transaction</h2>
           <div class="detail-grid">
             <div class="detail-row"><span class="detail-label">Transaction ID</span><span style="font-family:monospace;font-size:0.8rem;">${truncate(String(match.transactionId ?? ''), 20)}</span></div>
+            <div class="detail-row"><span class="detail-label">Payee</span><span id="txPayee" style="color:#888;font-size:0.85rem;">loading...</span></div>
+            <div class="detail-row"><span class="detail-label">Transaction Date</span><span id="txDate" style="color:#888;font-size:0.85rem;">loading...</span></div>
+            <div class="detail-row"><span class="detail-label">Account</span><span id="txAccount" style="color:#888;font-size:0.85rem;">loading...</span></div>
             <div class="detail-row"><span class="detail-label">Match Confidence</span><span class="badge confidence-${match.matchConfidence}">${match.matchConfidence}</span></div>
             <div class="detail-row"><span class="detail-label">Matched At</span><span>${formatDate(String(match.matchedAt ?? ''))}</span></div>
             <div class="detail-row"><span class="detail-label">Current Category</span><span id="txCategoryInfo" style="color:#888;font-size:0.8rem;">loading...</span></div>
@@ -347,29 +401,55 @@ export function renderReceiptDetail(
         return categoryCache || [];
       }
 
-      // Fetch current transaction category from Actual Budget (live lookup)
+      // Fetch current transaction details from Actual Budget (live lookup)
       (async function() {
         const el = document.getElementById('txCategoryInfo');
-        if (!el) return;
+        const payeeEl = document.getElementById('txPayee');
+        const dateEl = document.getElementById('txDate');
+        const accountEl = document.getElementById('txAccount');
         try {
           const txId = '${esc(String(match.transactionId ?? ''))}';
           const res = await fetch('/api/transactions/' + txId + '/details');
-          if (!res.ok) { el.textContent = '(unavailable)'; return; }
-          const data = await res.json();
-          if (data.isParent && data.subtransactions && data.subtransactions.length > 0) {
-            // Already split — show each sub-category
-            const parts = data.subtransactions.map(function(s) {
-              const amt = Math.abs(s.amount) / 100;
-              return (s.categoryName || 'Uncategorized') + ' ($' + amt.toFixed(2) + ')';
-            });
-            el.innerHTML = '<span style="color:#60a5fa;">Split:</span> ' + parts.join(', ');
-          } else if (data.categoryName) {
-            el.textContent = data.categoryName;
-            el.style.color = '#fbbf24';
-          } else {
-            el.textContent = '(uncategorized)';
+          if (!res.ok) {
+            if (el) el.textContent = '(unavailable)';
+            if (payeeEl) payeeEl.textContent = '(unavailable)';
+            if (dateEl) dateEl.textContent = '(unavailable)';
+            if (accountEl) accountEl.textContent = '(unavailable)';
+            return;
           }
-        } catch (e) { el.textContent = '(error)'; }
+          const data = await res.json();
+          // Populate payee, date, account
+          if (payeeEl) {
+            payeeEl.textContent = data.payeeName || data.importedPayee || '(unknown)';
+            payeeEl.style.color = '#ccc';
+          }
+          if (dateEl) {
+            dateEl.textContent = data.date || '(unknown)';
+            dateEl.style.color = '#ccc';
+          }
+          if (accountEl) {
+            accountEl.textContent = data.accountName || '(unknown)';
+            accountEl.style.color = '#ccc';
+          }
+          // Populate category
+          if (el) {
+            if (data.isParent && data.subtransactions && data.subtransactions.length > 0) {
+              var parts = data.subtransactions.map(function(s) {
+                var amt = Math.abs(s.amount) / 100;
+                return (s.categoryName || 'Uncategorized') + ' ($' + amt.toFixed(2) + ')';
+              });
+              el.innerHTML = '<span style="color:#60a5fa;">Split:</span> ' + parts.join(', ');
+            } else if (data.categoryName) {
+              el.textContent = data.categoryName;
+              el.style.color = '#fbbf24';
+            } else {
+              el.textContent = '(uncategorized)';
+            }
+          }
+        } catch (e) {
+          if (el) el.textContent = '(error)';
+          if (payeeEl) payeeEl.textContent = '(error)';
+        }
       })();
 
       // --- Category dropdown ---

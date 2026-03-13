@@ -270,7 +270,7 @@ class MatchingService {
       throw new Error(`Match not found: ${matchId}`);
     }
 
-    if (match.status === 'applied') {
+    if (match.status === 'applied' && match.preSplitSnapshot) {
       throw new Error(
         `Cannot unmatch an applied match (${matchId}). Rollback the split first.`,
       );

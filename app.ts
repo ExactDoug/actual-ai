@@ -314,8 +314,10 @@ if (REVIEW_UI_ENABLED) {
       const apiService = await createTempApiService();
       try {
         const accounts = await apiService.getAccounts();
+        const accountMap = new Map<string, string>();
         let allTransactions: TransactionEntity[] = [];
         for (const account of accounts) {
+          if (account.id && account.name) accountMap.set(account.id, account.name);
           allTransactions = allTransactions.concat(
             await apiService.getTransactions(account.id, '1990-01-01', '2030-01-01'),
           );
@@ -323,7 +325,12 @@ if (REVIEW_UI_ENABLED) {
         const tx = allTransactions.find((t) => t.id === transactionId);
         if (!tx) return null;
 
-        // Build category name lookup
+        // Build payee and category lookups
+        const payees = await apiService.getPayees();
+        const payeeMap = new Map<string, string>();
+        for (const p of payees) {
+          if (p.id && p.name) payeeMap.set(p.id, p.name);
+        }
         const groups = await apiService.getCategoryGroups();
         const catMap = new Map<string, string>();
         for (const group of groups) {
@@ -334,12 +341,28 @@ if (REVIEW_UI_ENABLED) {
           }
         }
 
+        const dateStr = String(tx.date ?? '');
+        const formattedDate = /^\d{8}$/.test(dateStr)
+          ? `${dateStr.slice(0, 4)}-${dateStr.slice(4, 6)}-${dateStr.slice(6, 8)}`
+          : dateStr;
+
         const result: {
+          date?: string;
+          payeeName?: string;
+          importedPayee?: string;
+          accountName?: string;
           categoryId?: string;
           categoryName?: string;
           isParent?: boolean;
           subtransactions?: { amount: number; categoryId?: string; categoryName?: string }[];
-        } = {};
+        } = {
+          date: formattedDate,
+          payeeName: tx.payee ? payeeMap.get(tx.payee) ?? '' : '',
+          importedPayee: tx.imported_payee ?? '',
+          accountName: (tx as unknown as { account?: string }).account
+            ? accountMap.get((tx as unknown as { account: string }).account) ?? ''
+            : '',
+        };
 
         if (tx.is_parent) {
           result.isParent = true;
@@ -352,6 +375,91 @@ if (REVIEW_UI_ENABLED) {
         } else if (tx.category) {
           result.categoryId = tx.category;
           result.categoryName = catMap.get(tx.category);
+        }
+
+        return result;
+      } finally {
+        await apiService.shutdown();
+      }
+    },
+
+    async getTransactionsBulk(transactionIds: string[]) {
+      const apiService = await createTempApiService();
+      try {
+        const accounts = await apiService.getAccounts();
+        const accountMap = new Map<string, string>();
+        let allTransactions: TransactionEntity[] = [];
+        for (const account of accounts) {
+          if (account.id && account.name) accountMap.set(account.id, account.name);
+          allTransactions = allTransactions.concat(
+            await apiService.getTransactions(account.id, '1990-01-01', '2030-01-01'),
+          );
+        }
+
+        const payees = await apiService.getPayees();
+        const payeeMap = new Map<string, string>();
+        for (const p of payees) {
+          if (p.id && p.name) payeeMap.set(p.id, p.name);
+        }
+        const groups = await apiService.getCategoryGroups();
+        const catMap = new Map<string, string>();
+        for (const group of groups) {
+          if ('categories' in group && Array.isArray(group.categories)) {
+            for (const cat of group.categories as { id: string; name: string }[]) {
+              catMap.set(cat.id, cat.name);
+            }
+          }
+        }
+
+        // Build account lookup from transactions (account field is the account ID)
+        const txAccountMap = new Map<string, string>();
+        for (const tx of allTransactions) {
+          const acctId = (tx as unknown as { account?: string }).account;
+          if (acctId) txAccountMap.set(tx.id, acctId);
+        }
+
+        const requestedSet = new Set(transactionIds);
+        const result: Record<string, {
+          date?: string;
+          payeeName?: string;
+          importedPayee?: string;
+          accountName?: string;
+          categoryId?: string;
+          categoryName?: string;
+          isParent?: boolean;
+          subtransactions?: { amount: number; categoryId?: string; categoryName?: string }[];
+        }> = {};
+
+        for (const tx of allTransactions) {
+          if (!requestedSet.has(tx.id)) continue;
+
+          const dateStr = String(tx.date ?? '');
+          const formattedDate = /^\d{8}$/.test(dateStr)
+            ? `${dateStr.slice(0, 4)}-${dateStr.slice(4, 6)}-${dateStr.slice(6, 8)}`
+            : dateStr;
+
+          const acctId = txAccountMap.get(tx.id);
+          const entry: typeof result[string] = {
+            date: formattedDate,
+            payeeName: tx.payee ? payeeMap.get(tx.payee) ?? '' : '',
+            importedPayee: tx.imported_payee ?? '',
+            accountName: acctId ? accountMap.get(acctId) ?? '' : '',
+          };
+
+          if (tx.is_parent) {
+            entry.isParent = true;
+            const subs = allTransactions.filter((t) => t.parent_id === tx.id);
+            entry.subtransactions = subs.map((s) => ({
+              amount: s.amount,
+              categoryId: s.category ?? undefined,
+              categoryName: s.category ? catMap.get(s.category) : undefined,
+            }));
+          } else if (tx.category) {
+            entry.categoryId = tx.category;
+            entry.categoryName = catMap.get(tx.category);
+          }
+
+          result[tx.id] = entry;
         }
 
         return result;

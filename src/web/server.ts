@@ -34,11 +34,25 @@ export interface WebServerDeps {
   onBatchReject?: (request: BatchRequest) => BatchResponse;
   onBatchReclassify?: (request: BatchRequest) => Promise<BatchResponse>;
   getTransactionDetails?: (transactionId: string) => Promise<{
+    date?: string;
+    payeeName?: string;
+    importedPayee?: string;
+    accountName?: string;
     categoryId?: string;
     categoryName?: string;
     isParent?: boolean;
     subtransactions?: { amount: number; categoryId?: string; categoryName?: string }[];
   } | null>;
+  getTransactionsBulk?: (transactionIds: string[]) => Promise<Record<string, {
+    date?: string;
+    payeeName?: string;
+    importedPayee?: string;
+    accountName?: string;
+    categoryId?: string;
+    categoryName?: string;
+    isParent?: boolean;
+    subtransactions?: { amount: number; categoryId?: string; categoryName?: string }[];
+  }>>;
 }
 
 export function createWebServer(deps: WebServerDeps): express.Express {
@@ -518,6 +532,69 @@ export function createWebServer(deps: WebServerDeps): express.Express {
         console.error('Error fetching transaction details:', error);
         res.status(500).json({ error: 'Failed to fetch transaction' });
       }
+    });
+
+    // --- Bulk transaction details (for queue page lazy loading) ---
+    app.post('/api/transactions/bulk-details', async (req: Request, res: Response) => {
+      if (!deps.getTransactionsBulk) {
+        res.status(501).json({ error: 'Not configured' });
+        return;
+      }
+      const { transactionIds } = req.body as { transactionIds?: string[] };
+      if (!transactionIds || !Array.isArray(transactionIds) || transactionIds.length === 0) {
+        res.json({});
+        return;
+      }
+      try {
+        const ids = transactionIds.slice(0, 200);
+        const result = await deps.getTransactionsBulk(ids);
+        res.json(result);
+      } catch (error) {
+        console.error('Error fetching bulk transaction details:', error);
+        res.status(500).json({ error: 'Failed to fetch transactions' });
+      }
+    });
+
+    // --- Keep Category: mark matches as applied without classification ---
+    app.post('/api/batch/keep-category', (req: Request, res: Response) => {
+      const { matchIds } = req.body as { matchIds?: string[] };
+      if (!matchIds || !Array.isArray(matchIds) || matchIds.length === 0) {
+        res.json({
+          processed: 0, succeeded: 0, failed: 0, errors: [],
+        });
+        return;
+      }
+      const result: {
+        processed: number; succeeded: number; failed: number;
+        errors: { matchId: string; error: string }[];
+      } = {
+        processed: matchIds.length, succeeded: 0, failed: 0, errors: [],
+      };
+      // eslint-disable-next-line no-restricted-syntax
+      for (const matchId of matchIds) {
+        const match = receiptStore.getMatch(matchId);
+        if (!match) {
+          result.failed++;
+          result.errors.push({ matchId, error: 'Match not found' });
+          continue;
+        }
+        if (match.status === 'applied') {
+          result.failed++;
+          result.errors.push({ matchId, error: 'Match already applied' });
+          continue;
+        }
+        receiptStore.updateMatchStatus(matchId, 'applied');
+        receiptStore.insertMatchHistory({
+          receiptId: match.receiptId as string,
+          newTransactionId: match.transactionId as string,
+          action: 'keep-category',
+          oldMatchConfidence: match.matchConfidence as string,
+          performedBy: 'user',
+        });
+        result.succeeded++;
+      }
+      console.log(`Batch keep-category: ${result.succeeded}/${result.processed} succeeded`);
+      res.json(result);
     });
 
     app.patch('/api/line-items/:id', (req: Request, res: Response) => {

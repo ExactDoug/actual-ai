@@ -157,9 +157,10 @@ interface ReceiptLineItem {
    *  is unreliable at mixed-merchandise stores (e.g., greeting cards
    *  typed as "food" at grocery stores). The adapter sets this to null.
    *  Taxability is inferred AFTER LLM classification from the assigned
-   *  category name using NM tax rules: categories matching
-   *  /^(groceries|medical|health|pharmacy|prescription)/i are exempt.
-   *  Tax is reconciled again after the fallback pipeline. */
+   *  category name using DB-backed prefix matching against the
+   *  `tax_exempt_categories` table (see Section 5.2).
+   *  Tax is reconciled again after the fallback pipeline and after
+   *  manual category edits via the Review UI. */
   taxable?: boolean | null;
 
   /** Provider-specific category/type guess (informational).
@@ -474,26 +475,53 @@ tax.
 4. **Add tip/shipping/fee** as separate subtransactions (NOT distributed).
 5. **Reconcile tax** after fallback pipeline (which may change categories).
 
-**Taxability inference (NM rules):**
+**Taxability inference (DB-backed):**
 
 After the LLM classifies each line item into a category, taxability is
-inferred from the assigned category name:
-- Categories matching `/^(groceries|medical|health|pharmacy|prescription)/i`
+inferred from the assigned category name using the `tax_exempt_categories`
+table in `receipts.db`:
+
+```sql
+CREATE TABLE IF NOT EXISTS tax_exempt_categories (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  namePrefix TEXT NOT NULL UNIQUE COLLATE NOCASE,
+  reason TEXT,
+  createdAt TEXT NOT NULL DEFAULT (datetime('now'))
+);
+```
+
+Seeded with NM gross receipts tax exemptions: `groceries`, `medical`,
+`health`, `pharmacy`, `prescription`. Managed via REST API:
+
+| Method | Path | Description |
+|--------|------|-------------|
+| GET | `/api/tax-exempt-categories` | List all prefixes |
+| POST | `/api/tax-exempt-categories` | Add prefix (`{ namePrefix, reason? }`) |
+| DELETE | `/api/tax-exempt-categories/:namePrefix` | Remove prefix |
+
+Inference logic (`store.isCategoryTaxExempt()`):
+- Category name matched against any prefix via SQL `LIKE namePrefix || '%' COLLATE NOCASE`
   → tax-exempt (`taxable = false`)
-- All other categories → taxable (`taxable = true`)
+- No prefix match → taxable (`taxable = true`)
 - Unclassified items (`suggestedCategoryName` is null) → unknown (`taxable = null`)
 
 Edge case: if ALL items are tax-exempt but the receipt has non-zero tax,
 this indicates a likely misclassification. Fall back to proportional
 allocation across all items (set all `taxable` flags to `null`).
 
-**Tax reconciliation after fallback:**
+**Tax reconciliation:**
 
-The fallback pipeline (Tiers 1-4) may change item categories after the
-initial tax allocation. After the fallback pipeline completes, `reconcileTax()`
-re-reads the final categories from the database, re-infers taxability, and
-re-runs the tax allocator. Only items whose `allocatedTax` or `amountWithTax`
-changed are updated in the database.
+Tax is reconciled via the standalone `reconcileMatchTax()` function
+(`src/receipt/tax-reconciler.ts`) in three scenarios:
+1. After the fallback pipeline changes categories
+2. After manual category edits via the Review UI (PATCH `/api/line-items/:id`)
+3. After batch reclassification
+
+The function re-reads classifications from the database, re-infers
+taxability using `store.isCategoryTaxExempt()`, and re-runs the tax
+allocator. Only items whose `allocatedTax` or `amountWithTax` changed
+are updated in the database. Returns the refreshed classifications array
+for live UI updates.
 
 Note: The `taxable` column in SQLite is INTEGER (1, 0, or NULL). When
 updating, boolean values MUST be converted to 0/1 — raw JS booleans
@@ -1008,12 +1036,23 @@ The existing Review UI (see REVIEW-UI-REQUIREMENTS.md) is extended with:
 
 Per line-item:
 - Approve suggested category
-- Change category (dropdown of existing categories)
+- **Change category** via click-to-edit dropdown (grouped by category group,
+  populated from `/api/categories`). Changing a category triggers server-side
+  tax reconciliation via `reconcileMatchTax()` — all line item rows update
+  live (tax, total, taxable indicator) without page reload. Green dot indicator
+  shows tax-exempt items.
 - Merge with adjacent item (combine two line-items into one subtransaction)
+
+**Transaction category comparison**: The Matched Transaction card displays the
+current category from Actual Budget via a live API lookup
+(`GET /api/transactions/:id/details`). Shows single category name for simple
+transactions, or a list of subtransaction categories and amounts for
+already-split transactions.
 
 Batch:
 - Approve all line-items on a receipt
 - Reject entire receipt match (don't split this transaction)
+- Apply button pulses continuously after any approve/reject action until clicked
 
 ### 7.3 New API Endpoints
 
@@ -1028,6 +1067,11 @@ Batch:
 | POST | `/api/receipts/:id/apply` | Apply the split to Actual Budget |
 | GET | `/api/connectors` | List configured receipt connectors |
 | POST | `/api/connectors/:id/test` | Test connector connectivity |
+| PATCH | `/api/line-items/:id` | Update status (`{ status }`) or category (`{ categoryId, categoryName }`) with tax recalc |
+| GET | `/api/tax-exempt-categories` | List tax-exempt category prefixes |
+| POST | `/api/tax-exempt-categories` | Add prefix (`{ namePrefix, reason? }`) |
+| DELETE | `/api/tax-exempt-categories/:namePrefix` | Remove prefix |
+| GET | `/api/transactions/:id/details` | Live lookup: current category from Actual Budget (single or split) |
 
 ## 8. Data Flow
 
@@ -1175,9 +1219,20 @@ CREATE TABLE receipt_matches (
   matchedAt TEXT NOT NULL,
   status TEXT DEFAULT 'pending',       -- pending, classified, approved, applied, rejected
   preSplitSnapshot TEXT,              -- original transaction JSON before split (for rollback)
+  transactionCategoryId TEXT,         -- original category UUID from Actual Budget at match time
+  overridesExisting INTEGER DEFAULT 0, -- 1 if transaction already had a category
 
   UNIQUE(transactionId, receiptId)
 );
+
+-- Tax-exempt category prefixes (for NM gross receipts tax rules)
+CREATE TABLE tax_exempt_categories (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  namePrefix TEXT NOT NULL UNIQUE COLLATE NOCASE,  -- case-insensitive prefix match
+  reason TEXT,                                      -- e.g., "NM gross receipts tax exemption"
+  createdAt TEXT NOT NULL DEFAULT (datetime('now'))
+);
+-- Seeded: groceries, medical, health, pharmacy, prescription
 
 -- Audit trail for match/unmatch/rematch operations
 CREATE TABLE receipt_match_history (
@@ -1237,6 +1292,13 @@ JOIN receipts r ON r.id = rm.receiptId;
 **Schema notes:**
 - All foreign keys use `ON DELETE CASCADE` so deleting a receipt cleans up
   matches, classifications, and history automatically.
+- `tax_exempt_categories` uses `COLLATE NOCASE` on `namePrefix` for
+  case-insensitive prefix matching. Taxability is inferred via
+  `SELECT 1 FROM tax_exempt_categories WHERE ? LIKE namePrefix || '%' COLLATE NOCASE`.
+- `receipt_matches.transactionCategoryId` captures the transaction's original
+  category UUID at match time, for display in the Review UI. For existing
+  matches (pre-column), a live lookup via `GET /api/transactions/:id/details`
+  fetches the current category from Actual Budget.
 - `receipt_matches.status` includes `approved` between `classified` and
   `applied` to represent user approval before the split is written.
 - The `transaction_receipt_status` view simplifies queries for the Review UI
