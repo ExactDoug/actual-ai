@@ -33,6 +33,12 @@ export interface WebServerDeps {
   onBatchUnmatch?: (request: BatchRequest) => BatchResponse;
   onBatchReject?: (request: BatchRequest) => BatchResponse;
   onBatchReclassify?: (request: BatchRequest) => Promise<BatchResponse>;
+  getTransactionDetails?: (transactionId: string) => Promise<{
+    categoryId?: string;
+    categoryName?: string;
+    isParent?: boolean;
+    subtransactions?: { amount: number; categoryId?: string; categoryName?: string }[];
+  } | null>;
 }
 
 export function createWebServer(deps: WebServerDeps): express.Express {
@@ -493,6 +499,25 @@ export function createWebServer(deps: WebServerDeps): express.Express {
         return;
       }
       res.json({ success: true });
+    });
+
+    // --- Transaction details (live lookup from Actual Budget) ---
+    app.get('/api/transactions/:id/details', async (req: Request, res: Response) => {
+      if (!deps.getTransactionDetails) {
+        res.status(501).json({ error: 'Not configured' });
+        return;
+      }
+      try {
+        const details = await deps.getTransactionDetails(req.params.id as string);
+        if (!details) {
+          res.status(404).json({ error: 'Transaction not found' });
+          return;
+        }
+        res.json(details);
+      } catch (error) {
+        console.error('Error fetching transaction details:', error);
+        res.status(500).json({ error: 'Failed to fetch transaction' });
+      }
     });
 
     app.patch('/api/line-items/:id', (req: Request, res: Response) => {

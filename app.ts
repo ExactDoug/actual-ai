@@ -310,6 +310,56 @@ if (REVIEW_UI_ENABLED) {
       }
       : undefined,
 
+    async getTransactionDetails(transactionId: string) {
+      const apiService = await createTempApiService();
+      try {
+        const accounts = await apiService.getAccounts();
+        let allTransactions: TransactionEntity[] = [];
+        for (const account of accounts) {
+          allTransactions = allTransactions.concat(
+            await apiService.getTransactions(account.id, '1990-01-01', '2030-01-01'),
+          );
+        }
+        const tx = allTransactions.find((t) => t.id === transactionId);
+        if (!tx) return null;
+
+        // Build category name lookup
+        const groups = await apiService.getCategoryGroups();
+        const catMap = new Map<string, string>();
+        for (const group of groups) {
+          if ('categories' in group && Array.isArray(group.categories)) {
+            for (const cat of group.categories as { id: string; name: string }[]) {
+              catMap.set(cat.id, cat.name);
+            }
+          }
+        }
+
+        const result: {
+          categoryId?: string;
+          categoryName?: string;
+          isParent?: boolean;
+          subtransactions?: { amount: number; categoryId?: string; categoryName?: string }[];
+        } = {};
+
+        if (tx.is_parent) {
+          result.isParent = true;
+          const subs = allTransactions.filter((t) => t.parent_id === tx.id);
+          result.subtransactions = subs.map((s) => ({
+            amount: s.amount,
+            categoryId: s.category ?? undefined,
+            categoryName: s.category ? catMap.get(s.category) : undefined,
+          }));
+        } else if (tx.category) {
+          result.categoryId = tx.category;
+          result.categoryName = catMap.get(tx.category);
+        }
+
+        return result;
+      } finally {
+        await apiService.shutdown();
+      }
+    },
+
     getConfig() {
       return {
         llmProvider,

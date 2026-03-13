@@ -271,8 +271,7 @@ export function renderReceiptDetail(
             <div class="detail-row"><span class="detail-label">Transaction ID</span><span style="font-family:monospace;font-size:0.8rem;">${truncate(String(match.transactionId ?? ''), 20)}</span></div>
             <div class="detail-row"><span class="detail-label">Match Confidence</span><span class="badge confidence-${match.matchConfidence}">${match.matchConfidence}</span></div>
             <div class="detail-row"><span class="detail-label">Matched At</span><span>${formatDate(String(match.matchedAt ?? ''))}</span></div>
-            ${match.transactionCategoryId ? `
-            <div class="detail-row"><span class="detail-label">Original Category</span><span id="originalCategoryName" data-category-id="${esc(String(match.transactionCategoryId))}" style="color:#fbbf24;">loading...</span></div>` : ''}
+            <div class="detail-row"><span class="detail-label">Current Category</span><span id="txCategoryInfo" style="color:#888;font-size:0.8rem;">loading...</span></div>
           </div>
           ${match.overridesExisting ? `
           <div style="margin-top: 0.8rem; padding: 0.6rem; background: #78350f22; border: 1px solid #78350f; border-radius: 4px; font-size: 0.85rem;">
@@ -348,15 +347,29 @@ export function renderReceiptDetail(
         return categoryCache || [];
       }
 
-      // Resolve original transaction category on page load
+      // Fetch current transaction category from Actual Budget (live lookup)
       (async function() {
-        const el = document.getElementById('originalCategoryName');
+        const el = document.getElementById('txCategoryInfo');
         if (!el) return;
-        const cats = await loadCategories();
-        const catId = el.dataset.categoryId;
-        const found = cats.find(c => c.id === catId);
-        el.textContent = found ? found.name : '(unknown)';
-        el.title = found ? found.group + ' > ' + found.name : catId;
+        try {
+          const txId = '${esc(String(match.transactionId ?? ''))}';
+          const res = await fetch('/api/transactions/' + txId + '/details');
+          if (!res.ok) { el.textContent = '(unavailable)'; return; }
+          const data = await res.json();
+          if (data.isParent && data.subtransactions && data.subtransactions.length > 0) {
+            // Already split — show each sub-category
+            const parts = data.subtransactions.map(function(s) {
+              const amt = Math.abs(s.amount) / 100;
+              return (s.categoryName || 'Uncategorized') + ' ($' + amt.toFixed(2) + ')';
+            });
+            el.innerHTML = '<span style="color:#60a5fa;">Split:</span> ' + parts.join(', ');
+          } else if (data.categoryName) {
+            el.textContent = data.categoryName;
+            el.style.color = '#fbbf24';
+          } else {
+            el.textContent = '(uncategorized)';
+          }
+        } catch (e) { el.textContent = '(error)'; }
       })();
 
       // --- Category dropdown ---
