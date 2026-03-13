@@ -6,7 +6,7 @@ Account: {{accountName}}
 
 Receipt line items:
 {{#each lineItems}}
-{{incIndex @index}}. {{description}} — qty {{quantity}} @ {{unitPrice}} = {{totalPrice}}
+{{incIndex @index}}. {{description}} — qty {{quantity}}{{#if hasUnitPrice}} @ {{unitPrice}}{{/if}} — {{totalPrice}}
 {{/each}}
 
 {{#if additionalCharges}}

@@ -224,8 +224,8 @@ export function renderReceiptDetail(
                 <td>${(c.lineItemIndex as number) + 1}</td>
                 <td title="${esc(String(c.description ?? ''))}">${esc(truncate(String(c.description ?? ''), 25))}</td>
                 <td>${c.quantity ?? 1}</td>
-                <td class="amount">${formatAmount(c.unitPrice as number)}</td>
-                <td class="amount">${formatAmount(c.allocatedTax as number)}</td>
+                <td class="amount">${formatAmount(c.totalPrice as number, true)}</td>
+                <td class="amount">${formatAmount(c.allocatedTax as number, true)}</td>
                 <td class="amount">${formatAmount(c.amountWithTax as number)}</td>
                 <td><span title="${esc(String(c.classificationType ?? ''))}">${esc(String(c.suggestedCategoryName ?? '-'))}</span>
                   ${c.confidence ? `<span class="badge confidence-${c.confidence}" style="margin-left:0.3rem;font-size:0.65rem;">${c.confidence}</span>` : ''}</td>
@@ -251,8 +251,8 @@ export function renderReceiptDetail(
                 <td>${i + 1}</td>
                 <td>${esc(String(li.description ?? ''))}</td>
                 <td>${li.quantity ?? 1}</td>
-                <td class="amount">${formatAmount(li.price as number ?? li.unit_price as number ?? 0)}</td>
-                <td class="amount">${formatAmount(li.total as number ?? 0)}</td>
+                <td class="amount">${formatAmount(li.price as number ?? li.unit_price as number ?? 0, true)}</td>
+                <td class="amount">${formatAmount(li.total as number ?? 0, true)}</td>
               </tr>`).join('')}
             </tbody>
           </table>
@@ -713,8 +713,9 @@ function formatDate(iso: string): string {
   return d.toLocaleString('en-US', { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' });
 }
 
-function formatAmount(cents: number): string {
+function formatAmount(cents: number, dashIfZero = false): string {
   if (cents == null) return '';
+  if (dashIfZero && cents === 0) return '\u2014';
   const val = Math.abs(cents) / 100;
   return (cents < 0 ? '-' : '') + '$' + val.toFixed(2);
 }

@@ -158,6 +158,7 @@ class LineItemClassifier {
       description: item.description,
       quantity: item.quantity,
       unitPrice: formatCents(item.unitPrice),
+      hasUnitPrice: item.unitPrice !== 0,
       totalPrice: formatCents(item.totalPrice),
     }));
 
