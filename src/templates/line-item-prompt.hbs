@@ -9,13 +9,8 @@ Receipt line items:
 {{incIndex @index}}. {{description}} — qty {{quantity}}{{#if hasUnitPrice}} @ {{unitPrice}}{{/if}} — {{totalPrice}}{{#if taxed}} [TAXED]{{/if}}{{#if taxExempt}} [TAX-EXEMPT]{{/if}}
 {{/each}}
 
-Tax hint: This receipt is from New Mexico where gross receipts tax applies.
-- [TAX-EXEMPT] = untaxed groceries/food. Categorize as Groceries or similar.
-- [TAXED] = non-grocery products (household goods, gifts, prepared food,
-  etc.) — do NOT categorize taxed items as Groceries.
-- Prescription medicine is also tax-exempt in NM (but OTC medicine is taxed).
-  At pharmacies (Walgreens, CVS, etc.), items that appear to be prescriptions
-  should be categorized as Medical/Health, not Groceries, even if tax-exempt.
+NM tax rules: [TAX-EXEMPT] = groceries. [TAXED] = not groceries.
+At pharmacies, tax-exempt Rx items are Medical/Health, not Groceries.
 
 {{#if additionalCharges}}
 Additional charges:
@@ -33,20 +28,5 @@ GROUP: {{name}} (ID: "{{id}}")
 {{/each}}
 
 Classify each line item into one of the existing categories above.
-
-For each item, provide:
-- itemIndex: the 0-based index of the line item
-- type: "existing" (use an existing category ID from above)
-- categoryId: the UUID of the matching category
-- confidence: "high", "medium", or "low"
-
-For items you cannot confidently categorize, set confidence to "low" and
-provide your best guess.
-
-Example response for a 2-item receipt:
-{
-  "items": [
-    { "itemIndex": 0, "type": "existing", "categoryId": "abc-123", "confidence": "high" },
-    { "itemIndex": 1, "type": "existing", "categoryId": "def-456", "confidence": "medium" }
-  ]
-}
+Return itemIndex (0-based), type ("existing"), categoryId (UUID from above),
+and confidence ("high"/"medium"/"low"). Use "low" for uncertain items.
