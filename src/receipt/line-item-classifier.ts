@@ -160,8 +160,6 @@ class LineItemClassifier {
       unitPrice: formatCents(item.unitPrice),
       hasUnitPrice: item.unitPrice !== 0,
       totalPrice: formatCents(item.totalPrice),
-      taxed: item.taxable === true,
-      taxExempt: item.taxable === false,
     }));
 
     const additionalCharges: Array<{ type: string; description: string; amount: string }> = [];
@@ -185,6 +183,7 @@ class LineItemClassifier {
       date: receipt.date,
       accountName: '',
       lineItems,
+      receiptTax: receipt.taxAmount !== 0 ? formatCents(receipt.taxAmount) : undefined,
       additionalCharges: additionalCharges.length > 0 ? additionalCharges : undefined,
       categoryGroups,
     };

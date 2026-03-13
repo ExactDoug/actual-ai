@@ -6,12 +6,13 @@ Account: {{accountName}}
 
 Receipt line items:
 {{#each lineItems}}
-{{incIndex @index}}. {{description}} — qty {{quantity}}{{#if hasUnitPrice}} @ {{unitPrice}}{{/if}} — {{totalPrice}}{{#if taxed}} [TAXED]{{/if}}{{#if taxExempt}} [TAX-EXEMPT]{{/if}}
+{{incIndex @index}}. {{description}} — qty {{quantity}}{{#if hasUnitPrice}} @ {{unitPrice}}{{/if}} — {{totalPrice}}
 {{/each}}
+{{#if receiptTax}}Receipt tax total: {{receiptTax}}{{/if}}
 
-NM tax rules: [TAX-EXEMPT] = groceries. [TAXED] = not groceries.
-At pharmacies, tax-exempt Rx items are Medical/Health, not Groceries.
-OTC medicine is taxed in NM.
+NM tax: groceries and Rx are tax-exempt; all other items are taxed.
+Use item descriptions to determine which are groceries vs non-grocery
+(gifts, household goods, prepared food, OTC medicine, etc.).
 
 {{#if additionalCharges}}
 Additional charges:
