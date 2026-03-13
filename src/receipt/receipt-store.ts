@@ -467,6 +467,9 @@ class ReceiptStore {
     classificationType?: string;
     confidence?: string;
     notes?: string;
+    allocatedTax?: number;
+    amountWithTax?: number;
+    taxable?: boolean | null;
   }): boolean {
     const fields: string[] = [];
     const values: unknown[] = [];
@@ -475,6 +478,9 @@ class ReceiptStore {
     if (updates.classificationType !== undefined) { fields.push('classificationType = ?'); values.push(updates.classificationType); }
     if (updates.confidence !== undefined) { fields.push('confidence = ?'); values.push(updates.confidence); }
     if (updates.notes !== undefined) { fields.push('notes = ?'); values.push(updates.notes); }
+    if (updates.allocatedTax !== undefined) { fields.push('allocatedTax = ?'); values.push(updates.allocatedTax); }
+    if (updates.amountWithTax !== undefined) { fields.push('amountWithTax = ?'); values.push(updates.amountWithTax); }
+    if (updates.taxable !== undefined) { fields.push('taxable = ?'); values.push(updates.taxable); }
     if (fields.length === 0) return false;
     values.push(id);
     const result = this.db.prepare(

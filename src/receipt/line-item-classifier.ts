@@ -333,7 +333,7 @@ class LineItemClassifier {
       `Classified ${n} line items for match ${matchId} (${highCount} high, ${mediumCount} medium, ${lowCount} low confidence)`,
     );
 
-    // Step 12: Run fallback pipeline on low-confidence items
+    // Step 14: Run fallback pipeline on low-confidence items
     if (lowCount > 0) {
       await this.runFallbackPipeline(
         matchId,
@@ -343,10 +343,75 @@ class LineItemClassifier {
         categoryNameMap,
         rules,
       );
+
+      // Step 15: Reconcile tax after fallback may have changed categories
+      this.reconcileTax(matchId, receipt);
     }
 
-    // Step 13: Update match status
+    // Step 16: Update match status
     this.store.updateMatchStatus(matchId, 'classified');
+  }
+
+  // ---------------------------------------------------------------------------
+  // Tax Reconciliation (after fallback may change categories)
+  // ---------------------------------------------------------------------------
+
+  private reconcileTax(matchId: string, receipt: ReceiptDocument): void {
+    const classifications = this.store.getClassificationsForMatch(matchId);
+    const taxExemptCategories = /^(groceries|medical|health|pharmacy|prescription)/i;
+
+    const inferredTaxable = classifications.map((c) => {
+      const name = c.suggestedCategoryName as string | null;
+      if (!name) return null;
+      return !taxExemptCategories.test(name);
+    });
+
+    const hasAnyTaxable = inferredTaxable.some((t) => t === true);
+    const taxableFlags = (receipt.taxAmount !== 0 && !hasAnyTaxable)
+      ? classifications.map(() => null)
+      : inferredTaxable;
+
+    const taxInput = {
+      lineItems: classifications.map((c, i) => ({
+        totalPrice: c.totalPrice as number,
+        taxable: taxableFlags[i],
+      })),
+      totalTax: receipt.taxAmount,
+    };
+    const taxResult = allocateTax(taxInput);
+
+    const lineItemAmounts = taxResult.allocations.map((a) => a.amountWithTax);
+    const additionalChargesTotal = (receipt.tipAmount ?? 0) + (receipt.shippingAmount ?? 0);
+    const balance = validateReceiptBalance(
+      lineItemAmounts, additionalChargesTotal, receipt.totalAmount,
+    );
+
+    if (!balance.balanced) {
+      let largestIdx = 0;
+      let largestAbs = 0;
+      for (let i = 0; i < lineItemAmounts.length; i++) {
+        const abs = Math.abs(lineItemAmounts[i]);
+        if (abs > largestAbs) { largestAbs = abs; largestIdx = i; }
+      }
+      taxResult.allocations[largestIdx].amountWithTax += balance.discrepancy;
+      taxResult.allocations[largestIdx].allocatedTax += balance.discrepancy;
+    }
+
+    // Update stored classifications with corrected tax
+    for (let i = 0; i < classifications.length; i++) {
+      const c = classifications[i];
+      const alloc = taxResult.allocations[i];
+      if (c.allocatedTax !== alloc.allocatedTax
+        || c.amountWithTax !== alloc.amountWithTax) {
+        this.store.updateLineItemClassification(c.id as string, {
+          allocatedTax: alloc.allocatedTax,
+          amountWithTax: alloc.amountWithTax,
+          taxable: taxableFlags[i],
+        });
+      }
+    }
+
+    console.log(`Tax reconciled for match ${matchId} after fallback`);
   }
 
   // ---------------------------------------------------------------------------
