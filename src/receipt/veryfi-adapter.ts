@@ -77,7 +77,8 @@ class VeryfiAdapter implements ReceiptConnector {
       // Veryfi's per-item tax/tax_rate are always 0, but the `type` field
       // (food, product, fuel, fee, discount) lets us infer taxability.
       // In NM, groceries (food) are tax-exempt; everything else is taxed.
-      taxable: item.type === 'food' ? false : (item.type ? true : null),
+      // Default to taxable when type is missing — food exemption is the exception.
+      taxable: item.type === 'food' ? false : true,
     };
   }
 
