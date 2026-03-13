@@ -123,6 +123,7 @@ async function runClassification() {
           payee: t.payee ? payeeMap.get(t.payee) : undefined,
           imported_payee: t.imported_payee ?? undefined,
           hasCategory: !!t.category,
+          categoryId: t.category ?? undefined,
         })));
       } finally {
         await tempApi.shutdown();

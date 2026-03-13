@@ -5,6 +5,7 @@ import { authMiddleware, loginHandler, loginPage, COOKIE_NAME } from './auth';
 import { renderDashboard, renderClassifications, renderHistory } from './views/renderer';
 import ReceiptStore from '../receipt/receipt-store';
 import ConnectorRegistry from '../receipt/connector-registry';
+import { reconcileMatchTax } from '../receipt/tax-reconciler';
 import type { BatchRequest, BatchResponse } from '../receipt/batch-service';
 import {
   renderReceiptQueue, renderReceiptDetail, renderUnmatchedReceipts,
@@ -470,29 +471,74 @@ export function createWebServer(deps: WebServerDeps): express.Express {
       }
     });
 
+    // --- Tax-exempt category management ---
+    app.get('/api/tax-exempt-categories', (_req: Request, res: Response) => {
+      res.json(receiptStore.getTaxExemptCategoriesAll());
+    });
+
+    app.post('/api/tax-exempt-categories', (req: Request, res: Response) => {
+      const { namePrefix, reason } = req.body as { namePrefix?: string; reason?: string };
+      if (!namePrefix || !namePrefix.trim()) {
+        res.status(400).json({ error: 'namePrefix is required' });
+        return;
+      }
+      receiptStore.addTaxExemptPrefix(namePrefix.trim(), reason);
+      res.json({ success: true });
+    });
+
+    app.delete('/api/tax-exempt-categories/:namePrefix', (req: Request, res: Response) => {
+      const ok = receiptStore.removeTaxExemptPrefix(req.params.namePrefix as string);
+      if (!ok) {
+        res.status(404).json({ error: 'Prefix not found' });
+        return;
+      }
+      res.json({ success: true });
+    });
+
     app.patch('/api/line-items/:id', (req: Request, res: Response) => {
-      const { status } = req.body as { status?: string };
+      const { status, categoryId, categoryName } = req.body as {
+        status?: string;
+        categoryId?: string;
+        categoryName?: string;
+      };
+
+      const id = req.params.id as string;
+      const lineItem = receiptStore.getLineItemClassification(id);
+      if (!lineItem) {
+        res.status(404).json({ error: 'Line item not found' });
+        return;
+      }
+      const matchId = lineItem.receiptMatchId as string;
+
+      // Category change: update category + reconcile tax
+      if (categoryId) {
+        receiptStore.updateLineItemClassification(id, {
+          suggestedCategoryId: categoryId,
+          suggestedCategoryName: categoryName,
+          classificationType: 'manual',
+          confidence: 'high',
+        });
+        const classifications = reconcileMatchTax(receiptStore, matchId);
+        res.json({ success: true, classifications });
+        return;
+      }
+
+      // Status change
       if (status !== 'approved' && status !== 'rejected') {
         res.status(400).json({ error: 'Status must be "approved" or "rejected"' });
         return;
       }
-      receiptStore.updateLineItemStatus(req.params.id as string, status);
+      receiptStore.updateLineItemStatus(id, status);
 
       // Auto-promote match status when all line items are approved
-      const lineItem = receiptStore.getLineItemClassification(
-        req.params.id as string,
-      );
-      if (lineItem) {
-        const matchId = lineItem.receiptMatchId as string;
-        const all = receiptStore.getClassificationsForMatch(matchId);
-        const allApproved = all.length > 0
-          && all.every((c) => c.status === 'approved');
-        if (allApproved) {
-          receiptStore.updateMatchStatus(matchId, 'approved');
-        }
+      const all = receiptStore.getClassificationsForMatch(matchId);
+      const allApproved = all.length > 0
+        && all.every((c) => c.status === 'approved');
+      if (allApproved) {
+        receiptStore.updateMatchStatus(matchId, 'approved');
       }
 
-      res.json({ success: true });
+      res.json({ success: true, classifications: all });
     });
   }
 

@@ -220,15 +220,19 @@ export function renderReceiptDetail(
               <th>Actions</th>
             </tr></thead>
             <tbody>
-              ${classifications.map((c) => `<tr data-item-id="${c.id}">
+              ${classifications.map((c) => `<tr data-item-id="${c.id}" data-match-id="${c.receiptMatchId}">
                 <td>${(c.lineItemIndex as number) + 1}</td>
                 <td title="${esc(String(c.description ?? ''))}">${esc(truncate(String(c.description ?? ''), 25))}</td>
                 <td>${c.quantity ?? 1}</td>
-                <td class="amount">${formatAmount(c.totalPrice as number, true)}</td>
-                <td class="amount">${formatAmount(c.allocatedTax as number, true)}</td>
-                <td class="amount">${formatAmount(c.amountWithTax as number)}</td>
-                <td><span title="${esc(String(c.classificationType ?? ''))}">${esc(String(c.suggestedCategoryName ?? '-'))}</span>
-                  ${c.confidence ? `<span class="badge confidence-${c.confidence}" style="margin-left:0.3rem;font-size:0.65rem;">${c.confidence}</span>` : ''}</td>
+                <td class="amount" data-field="totalPrice">${formatAmount(c.totalPrice as number, true)}</td>
+                <td class="amount" data-field="allocatedTax">${formatAmount(c.allocatedTax as number, true)}</td>
+                <td class="amount" data-field="amountWithTax">${formatAmount(c.amountWithTax as number)}</td>
+                <td class="category-cell">
+                  <span class="cat-label" data-item-id="${c.id}" data-category-id="${esc(String(c.suggestedCategoryId ?? ''))}" onclick="showCategoryDropdown(this)" title="Click to change category&#10;Type: ${esc(String(c.classificationType ?? ''))}" style="cursor:pointer;border-bottom:1px dashed #666;">${esc(String(c.suggestedCategoryName ?? '-'))}</span>
+                  <select class="cat-select" data-item-id="${c.id}" style="display:none;background:#1b1d2a;color:#e0e0e0;border:1px solid #8b7cf6;border-radius:4px;font-size:0.8rem;max-width:160px;" onchange="onCategoryChange(this)" onblur="hideCategoryDropdown(this)"></select>
+                  ${c.confidence ? `<span class="badge confidence-${c.confidence}" style="margin-left:0.3rem;font-size:0.65rem;">${c.confidence}</span>` : ''}
+                  ${c.taxable === 0 ? '<span title="Tax exempt" style="margin-left:0.2rem;font-size:0.7rem;color:#34d399;">&#9679;</span>' : ''}
+                </td>
                 <td><span class="badge ${c.status}">${c.status}</span></td>
                 <td>
                   ${c.status !== 'approved' ? `<button class="btn btn-approve" onclick="setItemStatus('${c.id}','approved')">&#10003;</button>` : ''}
@@ -267,6 +271,8 @@ export function renderReceiptDetail(
             <div class="detail-row"><span class="detail-label">Transaction ID</span><span style="font-family:monospace;font-size:0.8rem;">${truncate(String(match.transactionId ?? ''), 20)}</span></div>
             <div class="detail-row"><span class="detail-label">Match Confidence</span><span class="badge confidence-${match.matchConfidence}">${match.matchConfidence}</span></div>
             <div class="detail-row"><span class="detail-label">Matched At</span><span>${formatDate(String(match.matchedAt ?? ''))}</span></div>
+            ${match.transactionCategoryId ? `
+            <div class="detail-row"><span class="detail-label">Original Category</span><span id="originalCategoryName" data-category-id="${esc(String(match.transactionCategoryId))}" style="color:#fbbf24;">loading...</span></div>` : ''}
           </div>
           ${match.overridesExisting ? `
           <div style="margin-top: 0.8rem; padding: 0.6rem; background: #78350f22; border: 1px solid #78350f; border-radius: 4px; font-size: 0.85rem;">
@@ -278,17 +284,17 @@ export function renderReceiptDetail(
         ${allClassified ? `
         <div class="card">
           <h2>Split Preview</h2>
-          <table style="margin-top: 0.5rem;">
+          <table id="splitPreview" style="margin-top: 0.5rem;">
             <thead><tr><th>Category</th><th>Amount</th><th>Status</th></tr></thead>
             <tbody>
-              ${classifications.map((c) => `<tr>
-                <td>${esc(String(c.suggestedCategoryName ?? 'Uncategorized'))}</td>
-                <td class="amount">${formatAmount(c.amountWithTax as number)}</td>
+              ${classifications.map((c) => `<tr data-split-id="${c.id}">
+                <td data-field="splitCategory">${esc(String(c.suggestedCategoryName ?? 'Uncategorized'))}</td>
+                <td class="amount" data-field="splitAmount">${formatAmount(c.amountWithTax as number)}</td>
                 <td><span class="badge ${c.status}">${c.status}</span></td>
               </tr>`).join('')}
               <tr style="border-top: 2px solid #3a3d52; font-weight: 700;">
                 <td>Total</td>
-                <td class="amount">${formatAmount(classifications.reduce((s, c) => s + (c.amountWithTax as number ?? 0), 0))}</td>
+                <td class="amount" id="splitTotal">${formatAmount(classifications.reduce((s, c) => s + (c.amountWithTax as number ?? 0), 0))}</td>
                 <td></td>
               </tr>
             </tbody>
@@ -331,6 +337,152 @@ export function renderReceiptDetail(
       const matchId = '${match.id}';
       const receiptId = '${receipt.id}';
 
+      // Category cache (loaded once)
+      let categoryCache = null;
+      async function loadCategories() {
+        if (categoryCache) return categoryCache;
+        try {
+          const res = await fetch('/api/categories');
+          if (res.ok) categoryCache = await res.json();
+        } catch (e) { console.error('Failed to load categories', e); }
+        return categoryCache || [];
+      }
+
+      // Resolve original transaction category on page load
+      (async function() {
+        const el = document.getElementById('originalCategoryName');
+        if (!el) return;
+        const cats = await loadCategories();
+        const catId = el.dataset.categoryId;
+        const found = cats.find(c => c.id === catId);
+        el.textContent = found ? found.name : '(unknown)';
+        el.title = found ? found.group + ' > ' + found.name : catId;
+      })();
+
+      // --- Category dropdown ---
+      async function showCategoryDropdown(label) {
+        const itemId = label.dataset.itemId;
+        const select = label.parentElement.querySelector('.cat-select');
+        const cats = await loadCategories();
+        if (select.options.length <= 1) {
+          select.innerHTML = '';
+          const groups = {};
+          cats.forEach(c => {
+            const g = c.group || 'Other';
+            if (!groups[g]) groups[g] = [];
+            groups[g].push(c);
+          });
+          Object.keys(groups).sort().forEach(g => {
+            const og = document.createElement('optgroup');
+            og.label = g;
+            groups[g].forEach(c => {
+              const opt = document.createElement('option');
+              opt.value = c.id;
+              opt.textContent = c.name;
+              opt.dataset.name = c.name;
+              if (c.id === label.dataset.categoryId) opt.selected = true;
+              og.appendChild(opt);
+            });
+            select.appendChild(og);
+          });
+        }
+        label.style.display = 'none';
+        select.style.display = 'inline-block';
+        select.focus();
+      }
+
+      function hideCategoryDropdown(select) {
+        setTimeout(() => {
+          if (document.activeElement === select) return;
+          select.style.display = 'none';
+          select.parentElement.querySelector('.cat-label').style.display = '';
+        }, 150);
+      }
+
+      async function onCategoryChange(select) {
+        const itemId = select.dataset.itemId;
+        const option = select.options[select.selectedIndex];
+        const categoryId = option.value;
+        const categoryName = option.dataset.name || option.textContent;
+
+        try {
+          const res = await fetch('/api/line-items/' + itemId, {
+            method: 'PATCH', headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ categoryId, categoryName })
+          });
+          if (res.ok) {
+            const data = await res.json();
+            if (data.classifications) updateAllRows(data.classifications);
+            showToast('success', 'Category updated');
+          } else {
+            const d = await res.json();
+            showToast('error', d.error || 'Failed to update');
+          }
+        } catch (err) { showToast('error', String(err)); }
+
+        select.style.display = 'none';
+        select.parentElement.querySelector('.cat-label').style.display = '';
+      }
+
+      // --- Live row updates ---
+      function fmtAmount(cents, dashIfZero) {
+        if (cents == null) return '';
+        if (dashIfZero && cents === 0) return '\\u2014';
+        const val = Math.abs(cents) / 100;
+        return (cents < 0 ? '-' : '') + '$' + val.toFixed(2);
+      }
+
+      function updateAllRows(classifications) {
+        let splitTotal = 0;
+        classifications.forEach(c => {
+          const row = document.querySelector('tr[data-item-id="' + c.id + '"]');
+          if (row) {
+            const taxCell = row.querySelector('[data-field="allocatedTax"]');
+            const totalCell = row.querySelector('[data-field="amountWithTax"]');
+            if (taxCell) taxCell.textContent = fmtAmount(c.allocatedTax, true);
+            if (totalCell) totalCell.textContent = fmtAmount(c.amountWithTax);
+
+            // Update category label
+            const label = row.querySelector('.cat-label');
+            if (label) {
+              label.textContent = c.suggestedCategoryName || '-';
+              label.dataset.categoryId = c.suggestedCategoryId || '';
+            }
+            // Update tax-exempt indicator
+            const existingDot = row.querySelector('.category-cell span[title="Tax exempt"]');
+            if (existingDot) existingDot.remove();
+            if (c.taxable === 0) {
+              const dot = document.createElement('span');
+              dot.title = 'Tax exempt';
+              dot.style.cssText = 'margin-left:0.2rem;font-size:0.7rem;color:#34d399;';
+              dot.innerHTML = '&#9679;';
+              row.querySelector('.category-cell').appendChild(dot);
+            }
+
+            // Update status badge
+            const statusBadge = row.querySelector('td:nth-last-child(2) .badge');
+            if (statusBadge && c.status) {
+              statusBadge.className = 'badge ' + c.status;
+              statusBadge.textContent = c.status;
+            }
+          }
+
+          // Update split preview
+          const splitRow = document.querySelector('tr[data-split-id="' + c.id + '"]');
+          if (splitRow) {
+            const catCell = splitRow.querySelector('[data-field="splitCategory"]');
+            const amtCell = splitRow.querySelector('[data-field="splitAmount"]');
+            if (catCell) catCell.textContent = c.suggestedCategoryName || 'Uncategorized';
+            if (amtCell) amtCell.textContent = fmtAmount(c.amountWithTax);
+          }
+          splitTotal += (c.amountWithTax || 0);
+        });
+
+        const totalEl = document.getElementById('splitTotal');
+        if (totalEl) totalEl.textContent = fmtAmount(splitTotal);
+      }
+
+      // --- Existing actions ---
       async function classifyReceipt() {
         showToast('success', 'Classification started...');
         try {
@@ -361,8 +513,8 @@ export function renderReceiptDetail(
             body: JSON.stringify({ status })
           });
           if (res.ok) {
-            const badge = document.querySelector('tr[data-item-id="' + itemId + '"] .badge.pending, tr[data-item-id="' + itemId + '"] .badge.approved, tr[data-item-id="' + itemId + '"] .badge.rejected');
-            if (badge) { badge.className = 'badge ' + status; badge.textContent = status; }
+            const data = await res.json();
+            if (data.classifications) updateAllRows(data.classifications);
             showToast('success', status === 'approved' ? 'Approved' : 'Rejected');
             nudgeApplyButton();
           }
@@ -372,7 +524,7 @@ export function renderReceiptDetail(
       function nudgeApplyButton() {
         const btn = document.getElementById('applyBtn');
         if (!btn) return;
-        const badges = document.querySelectorAll('tr[data-item-id] .badge.pending, tr[data-item-id] .badge.approved, tr[data-item-id] .badge.rejected');
+        const badges = document.querySelectorAll('tr[data-item-id] td:nth-last-child(2) .badge');
         const allApproved = [...badges].every(b => b.classList.contains('approved'));
         if (allApproved) { btn.disabled = false; btn.removeAttribute('title'); }
         btn.classList.remove('btn-attention');
