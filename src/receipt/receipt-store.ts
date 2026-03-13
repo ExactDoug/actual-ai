@@ -448,6 +448,12 @@ class ReceiptStore {
     ).all(matchId) as Record<string, unknown>[];
   }
 
+  getLineItemClassification(id: string): Record<string, unknown> | undefined {
+    return this.db.prepare(
+      'SELECT * FROM line_item_classifications WHERE id = ?',
+    ).get(id) as Record<string, unknown> | undefined;
+  }
+
   updateLineItemStatus(id: string, status: string): boolean {
     const result = this.db.prepare(
       'UPDATE line_item_classifications SET status = ? WHERE id = ?',

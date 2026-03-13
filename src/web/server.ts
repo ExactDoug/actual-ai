@@ -477,6 +477,21 @@ export function createWebServer(deps: WebServerDeps): express.Express {
         return;
       }
       receiptStore.updateLineItemStatus(req.params.id as string, status);
+
+      // Auto-promote match status when all line items are approved
+      const lineItem = receiptStore.getLineItemClassification(
+        req.params.id as string,
+      );
+      if (lineItem) {
+        const matchId = lineItem.receiptMatchId as string;
+        const all = receiptStore.getClassificationsForMatch(matchId);
+        const allApproved = all.length > 0
+          && all.every((c) => c.status === 'approved');
+        if (allApproved) {
+          receiptStore.updateMatchStatus(matchId, 'approved');
+        }
+      }
+
       res.json({ success: true });
     });
   }
