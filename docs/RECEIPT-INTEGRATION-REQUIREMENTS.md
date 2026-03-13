@@ -1015,7 +1015,11 @@ The existing Review UI (see REVIEW-UI-REQUIREMENTS.md) is extended with:
 
 - **Receipt match queue**: List of receipts awaiting transaction matching.
   User can confirm auto-matches, resolve probable/possible matches, or
-  manually associate receipts to transactions.
+  manually associate receipts to transactions. Queue displays lazy-loaded
+  transaction data (payee, date, category) fetched in bulk from Actual Budget
+  via `POST /api/transactions/bulk-details`. Split transactions display as
+  "Split: Cat1, Cat2". Users can select matches and use "Keep Category" to
+  finalize without invoking AI classification.
 - **Unmatched transactions view**: All transactions without a receipt
   match, filterable by date range, account, and amount. Users can
   select one and manually associate a receipt (from the unmatched
@@ -1028,7 +1032,9 @@ The existing Review UI (see REVIEW-UI-REQUIREMENTS.md) is extended with:
   transaction). If a split was already applied, the system rolls back
   the split before unmatching.
 - **Receipt detail view**: Shows receipt image (if available), all line items,
-  tax breakdown, and the proposed split categorization side-by-side.
+  tax breakdown, and the proposed split categorization side-by-side. The Matched
+  Transaction card includes payee, transaction date, and account name fetched
+  live from Actual Budget.
 - **Split preview**: Before applying, show a visual breakdown of how the
   transaction will be split (amounts, categories, tax allocation).
 
@@ -1052,6 +1058,10 @@ already-split transactions.
 Batch:
 - Approve all line-items on a receipt
 - Reject entire receipt match (don't split this transaction)
+- **Keep Category**: Mark matches as `applied` without creating classifications or
+  writing to Actual Budget — retains the existing transaction category. Available
+  from the queue page when the user sees that the current category is already correct.
+  "Kept" matches have no `preSplitSnapshot` and can be unmatched directly.
 - Apply button pulses continuously after any approve/reject action until clicked
 
 ### 7.3 New API Endpoints
@@ -1071,7 +1081,9 @@ Batch:
 | GET | `/api/tax-exempt-categories` | List tax-exempt category prefixes |
 | POST | `/api/tax-exempt-categories` | Add prefix (`{ namePrefix, reason? }`) |
 | DELETE | `/api/tax-exempt-categories/:namePrefix` | Remove prefix |
-| GET | `/api/transactions/:id/details` | Live lookup: current category from Actual Budget (single or split) |
+| GET | `/api/transactions/:id/details` | Live lookup: current category, payee, date, account from Actual Budget (single or split) |
+| POST | `/api/transactions/bulk-details` | Bulk lookup of transaction payee, date, account, category (max 200 IDs) |
+| POST | `/api/batch/keep-category` | Mark matches as applied without AI classification (existing category retained) |
 
 ## 8. Data Flow
 
@@ -1134,24 +1146,29 @@ only those items fall back to the generalized approach.
                  ┌──────────┐
                  │ pending   │  ← matched, awaiting classification
                  └─────┬─────┘
-                       │ classify (LLM line-item pipeline)
-                       ▼
-                 ┌──────────┐
-                 │classified │  ← line items classified, split plan ready
-                 └─────┬─────┘
-                       │ user approves split plan
-                       ▼
-                 ┌──────────┐
-                 │ approved  │  ← user approved, ready to apply
-                 └─────┬─────┘
-                       │ apply to Actual Budget
-                       ▼
-                 ┌──────────┐
-                 │ applied   │  ← split written to Actual Budget
-                 └──────────┘
+                       │
+              ┌────────┴────────┐
+              │                 │
+              │ classify        │ keep-category
+              │ (LLM pipeline)  │ (skip AI)
+              ▼                 │
+        ┌──────────┐            │
+        │classified │            │
+        └─────┬─────┘            │
+              │ user approves    │
+              ▼                 │
+        ┌──────────┐            │
+        │ approved  │            │
+        └─────┬─────┘            │
+              │ apply            │
+              ▼                 ▼
+        ┌──────────────────────────┐
+        │ applied                  │  ← split written OR category kept as-is
+        └──────────────────────────┘
 
   Any state → rejected (user rejects at any point)
-  Any state → (no match) (user unmatches; rollback if applied)
+  Any state → (no match) (user unmatches; rollback if applied with split)
+  "Kept" applied matches (no preSplitSnapshot) can be unmatched directly
 ```
 
 ## 9. Configuration

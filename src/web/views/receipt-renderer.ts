@@ -96,13 +96,13 @@ export function renderReceiptQueue(
           <th><a href="/receipts${qs({ sortBy: 'status', sortDir: filter.sortBy === 'status' && filter.sortDir === 'asc' ? 'desc' : 'asc' })}">Status</a></th>
           <th><a href="/receipts${qs({ sortBy: 'confidence', sortDir: filter.sortBy === 'confidence' && filter.sortDir === 'asc' ? 'desc' : 'asc' })}">Confidence</a></th>
           <th>Override</th>
-          <th><a href="/receipts${qs({ sortBy: 'vendor', sortDir: filter.sortBy === 'vendor' && filter.sortDir === 'asc' ? 'desc' : 'asc' })}">Vendor</a></th>
-          <th>Payee</th>
-          <th><a href="/receipts${qs({ sortBy: 'date', sortDir: filter.sortBy === 'date' && filter.sortDir === 'desc' ? 'asc' : 'desc' })}">Receipt Date</a></th>
-          <th>Tx Date</th>
-          <th><a href="/receipts${qs({ sortBy: 'amount', sortDir: filter.sortBy === 'amount' && filter.sortDir === 'desc' ? 'asc' : 'desc' })}">Amount</a></th>
-          <th>Category</th>
-          <th>Items</th>
+          <th><span class="col-source src-receipt">Receipt</span><a href="/receipts${qs({ sortBy: 'vendor', sortDir: filter.sortBy === 'vendor' && filter.sortDir === 'asc' ? 'desc' : 'asc' })}">Vendor</a></th>
+          <th><span class="col-source src-budget">Budget</span>Payee</th>
+          <th><span class="col-source src-receipt">Receipt</span><a href="/receipts${qs({ sortBy: 'date', sortDir: filter.sortBy === 'date' && filter.sortDir === 'desc' ? 'asc' : 'desc' })}">Date</a></th>
+          <th><span class="col-source src-budget">Budget</span>Tx Date</th>
+          <th><span class="col-source src-receipt">Receipt</span><a href="/receipts${qs({ sortBy: 'amount', sortDir: filter.sortBy === 'amount' && filter.sortDir === 'desc' ? 'asc' : 'desc' })}">Amount</a></th>
+          <th><span class="col-source src-budget">Budget</span>Category</th>
+          <th><span class="col-source src-receipt">Receipt</span>Items</th>
           <th><a href="/receipts${qs({ sortBy: 'matchedAt', sortDir: filter.sortBy === 'matchedAt' && filter.sortDir === 'desc' ? 'asc' : 'desc' })}">Matched</a></th>
         </tr></thead>
         <tbody>
@@ -112,11 +112,11 @@ export function renderReceiptQueue(
             <td><span class="badge confidence-${r.matchConfidence}">${r.matchConfidence}</span></td>
             <td>${r.overridesExisting ? '<span title="Will replace existing category" style="color:#fbbf24;">&#9888;</span>' : ''}</td>
             <td>${esc(truncate(String(r.vendorName ?? ''), 30))}</td>
-            <td class="tx-payee" style="color:#666;font-size:0.85rem;">—</td>
+            <td class="tx-payee"><span class="loading-dots">···</span></td>
             <td>${r.receiptDate ?? ''}</td>
-            <td class="tx-date" style="color:#666;font-size:0.85rem;">—</td>
+            <td class="tx-date"><span class="loading-dots">···</span></td>
             <td class="amount negative">${formatAmount(r.totalAmount as number)}</td>
-            <td class="tx-category" style="color:#666;font-size:0.85rem;">—</td>
+            <td class="tx-category"><span class="loading-dots">···</span></td>
             <td>${r.lineItemCount ?? 0}</td>
             <td>${formatDate(String(r.matchedAt ?? ''))}</td>
           </tr>`).join('')}
@@ -167,28 +167,34 @@ export function renderReceiptQueue(
         var rows = document.querySelectorAll('tr[data-tx-id]');
         if (rows.length === 0) return;
         var ids = [...new Set([...rows].map(function(r) { return r.dataset.txId; }))];
+        function clearDots(row) {
+          row.querySelectorAll('.loading-dots').forEach(function(d) { d.textContent = '\\u2014'; d.className = ''; d.style.color = '#555'; });
+        }
         try {
           var res = await fetch('/api/transactions/bulk-details', {
             method: 'POST', headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ transactionIds: ids })
           });
-          if (!res.ok) return;
+          if (!res.ok) { rows.forEach(clearDots); return; }
           var data = await res.json();
           rows.forEach(function(row) {
             var info = data[row.dataset.txId];
-            if (!info) return;
+            if (!info) { clearDots(row); return; }
             var payeeCell = row.querySelector('.tx-payee');
             var dateCell = row.querySelector('.tx-date');
             var catCell = row.querySelector('.tx-category');
             if (payeeCell) {
               payeeCell.textContent = info.payeeName || info.importedPayee || '';
               payeeCell.style.color = '#ccc';
+              payeeCell.style.fontSize = '0.85rem';
             }
             if (dateCell) {
               dateCell.textContent = info.date || '';
               dateCell.style.color = '#ccc';
+              dateCell.style.fontSize = '0.85rem';
             }
             if (catCell) {
+              catCell.style.fontSize = '0.85rem';
               if (info.isParent && info.subtransactions && info.subtransactions.length > 0) {
                 var cats = info.subtransactions.map(function(s) { return s.categoryName || '?'; });
                 var unique = [...new Set(cats)];
@@ -203,7 +209,10 @@ export function renderReceiptQueue(
               }
             }
           });
-        } catch (e) { console.error('Failed to load transaction details', e); }
+        } catch (e) {
+          console.error('Failed to load transaction details', e);
+          rows.forEach(clearDots);
+        }
       })();
     </script>
   `;
@@ -930,6 +939,13 @@ function receiptLayout(title: string, content: string, activeNav: string): strin
       animation: btn-pulse 1.5s ease-in-out infinite;
       border: 1px solid #60a5fa;
     }
+
+    @keyframes loading-fade { 0%,100% { opacity: 0.3; } 50% { opacity: 0.8; } }
+    .loading-dots { color: #555; font-size: 0.8rem; letter-spacing: 2px; animation: loading-fade 1.5s ease-in-out infinite; }
+
+    .col-source { display: block; font-size: 0.55rem; font-weight: 400; letter-spacing: 0.08em; text-transform: uppercase; line-height: 1; margin-bottom: 2px; }
+    .col-source.src-receipt { color: #8b7cf6; }
+    .col-source.src-budget { color: #60a5fa; }
   </style>
 </head>
 <body>
