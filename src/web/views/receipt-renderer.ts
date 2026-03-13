@@ -551,7 +551,13 @@ export function renderReceiptDetail(
             method: 'POST', headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ matchIds: [matchId] })
           });
-          if (res.ok) { showToast('success', 'All items approved'); setTimeout(() => location.reload(), 800); }
+          if (res.ok) {
+            showToast('success', 'All items approved');
+            document.querySelectorAll('tr[data-item-id] td:nth-last-child(2) .badge').forEach(function(b) {
+              b.className = 'badge approved'; b.textContent = 'approved';
+            });
+            nudgeApplyButton();
+          }
           else { const d = await res.json(); showToast('error', d.error); }
         } catch (err) { showToast('error', String(err)); }
       }
@@ -563,7 +569,12 @@ export function renderReceiptDetail(
             method: 'POST', headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ matchIds: [matchId] })
           });
-          if (res.ok) { showToast('success', 'All items rejected'); setTimeout(() => location.reload(), 800); }
+          if (res.ok) {
+            showToast('success', 'All items rejected');
+            document.querySelectorAll('tr[data-item-id] td:nth-last-child(2) .badge').forEach(function(b) {
+              b.className = 'badge rejected'; b.textContent = 'rejected';
+            });
+          }
           else { const d = await res.json(); showToast('error', d.error); }
         } catch (err) { showToast('error', String(err)); }
       }
@@ -603,6 +614,16 @@ export function renderReceiptDetail(
         t.style.display = 'block';
         setTimeout(() => { t.style.display = 'none'; }, 3000);
       }
+
+      // Auto-pulse Apply button on page load if all items already approved
+      (function() {
+        const btn = document.getElementById('applyBtn');
+        if (!btn || btn.disabled) return;
+        const badges = document.querySelectorAll('tr[data-item-id] td:nth-last-child(2) .badge');
+        if (badges.length > 0 && [...badges].every(b => b.classList.contains('approved'))) {
+          btn.classList.add('btn-attention');
+        }
+      })();
     </script>
   `;
   return receiptLayout(`${receipt.vendorName ?? 'Receipt'} - Detail`, content, 'queue');
@@ -826,7 +847,7 @@ function receiptLayout(title: string, content: string, activeNav: string): strin
       100% { box-shadow: 0 0 0 0 rgba(96, 165, 250, 0); }
     }
     .btn-attention {
-      animation: btn-pulse 1.5s ease-in-out 2;
+      animation: btn-pulse 1.5s ease-in-out infinite;
       border: 1px solid #60a5fa;
     }
   </style>
