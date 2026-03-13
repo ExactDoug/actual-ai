@@ -204,17 +204,82 @@ class LineItemClassifier {
       return;
     }
 
-    // Step 9: Run tax allocation
+    // Step 9: Resolve LLM results into category assignments
+    const llmResultMap = new Map<number, LlmClassificationItem>();
+    for (const result of llmResults) {
+      llmResultMap.set(result.itemIndex, result);
+    }
+
+    const categoryNameMap = new Map<string, string>();
+    for (const cat of categories) {
+      categoryNameMap.set(cat.id, cat.name);
+    }
+
+    const resolved: Array<{
+      suggestedCategoryId?: string;
+      suggestedCategoryName?: string;
+      classificationType?: string;
+      confidence?: string;
+    }> = [];
+    let highCount = 0;
+    let mediumCount = 0;
+    let lowCount = 0;
+
+    for (let i = 0; i < receipt.lineItems.length; i++) {
+      const llmResult = llmResultMap.get(i);
+      let suggestedCategoryId: string | undefined;
+      let suggestedCategoryName: string | undefined;
+      let classificationType: string | undefined;
+      let confidence: string | undefined;
+
+      if (llmResult && llmResult.confidence !== 'low') {
+        suggestedCategoryId = llmResult.categoryId;
+        suggestedCategoryName = categoryNameMap.get(llmResult.categoryId);
+        classificationType = llmResult.type;
+        confidence = llmResult.confidence;
+      } else {
+        classificationType = 'fallback';
+        confidence = llmResult?.confidence ?? 'low';
+        suggestedCategoryId = llmResult?.categoryId;
+        suggestedCategoryName = suggestedCategoryId
+          ? categoryNameMap.get(suggestedCategoryId)
+          : undefined;
+      }
+
+      if (confidence === 'high') highCount++;
+      else if (confidence === 'medium') mediumCount++;
+      else lowCount++;
+
+      resolved.push({
+        suggestedCategoryId, suggestedCategoryName, classificationType, confidence,
+      });
+    }
+
+    // Step 10: Infer taxability from LLM category assignments (NM rules)
+    const taxExemptCategories = /^(groceries|medical|health|pharmacy|prescription)/i;
+    const inferredTaxable = resolved.map((r) => {
+      if (!r.suggestedCategoryName) return null;
+      return !taxExemptCategories.test(r.suggestedCategoryName);
+    });
+
+    // If all items are tax-exempt but receipt has tax, something is
+    // misclassified — fall back to proportional allocation.
+    const hasAnyTaxable = inferredTaxable.some((t) => t === true);
+    const taxableFlags = (receipt.taxAmount !== 0 && !hasAnyTaxable)
+      ? receipt.lineItems.map(() => null)
+      : inferredTaxable;
+
+    // Step 11: Run tax allocation using category-inferred taxability
     const taxInput = {
-      lineItems: receipt.lineItems.map((item) => ({
+      lineItems: receipt.lineItems.map((item, i) => ({
         totalPrice: item.totalPrice,
-        taxable: item.taxable ?? null,
+        taxable: taxableFlags[i],
       })),
       totalTax: receipt.taxAmount,
     };
     const taxResult = allocateTax(taxInput);
 
-    // Step 10: Validate receipt balance
+    // Step 12: Validate receipt balance
     const lineItemAmounts = taxResult.allocations.map((a) => a.amountWithTax);
     const additionalChargesTotal = (receipt.tipAmount ?? 0) + (receipt.shippingAmount ?? 0);
     const balance = validateReceiptBalance(
@@ -240,48 +305,11 @@ class LineItemClassifier {
       taxResult.allocations[largestIdx].allocatedTax += balance.discrepancy;
     }
 
-    // Step 11: Insert line item classifications
-    const llmResultMap = new Map<number, LlmClassificationItem>();
-    for (const result of llmResults) {
-      llmResultMap.set(result.itemIndex, result);
-    }
-
-    const categoryNameMap = new Map<string, string>();
-    for (const cat of categories) {
-      categoryNameMap.set(cat.id, cat.name);
-    }
-
-    let highCount = 0;
-    let mediumCount = 0;
-    let lowCount = 0;
-
+    // Step 13: Insert line item classifications
     for (let i = 0; i < receipt.lineItems.length; i++) {
       const item = receipt.lineItems[i];
       const allocation = taxResult.allocations[i];
-      const llmResult = llmResultMap.get(i);
-
-      let suggestedCategoryId: string | undefined;
-      let suggestedCategoryName: string | undefined;
-      let classificationType: string | undefined;
-      let confidence: string | undefined;
-
-      if (llmResult && llmResult.confidence !== 'low') {
-        suggestedCategoryId = llmResult.categoryId;
-        suggestedCategoryName = categoryNameMap.get(llmResult.categoryId);
-        classificationType = llmResult.type;
-        confidence = llmResult.confidence;
-      } else {
-        classificationType = 'fallback';
-        confidence = llmResult?.confidence ?? 'low';
-        suggestedCategoryId = llmResult?.categoryId;
-        suggestedCategoryName = suggestedCategoryId
-          ? categoryNameMap.get(suggestedCategoryId)
-          : undefined;
-      }
-
-      if (confidence === 'high') highCount++;
-      else if (confidence === 'medium') mediumCount++;
-      else lowCount++;
+      const r = resolved[i];
 
       this.store.insertLineItemClassification({
         receiptMatchId: matchId,
@@ -290,13 +318,13 @@ class LineItemClassifier {
         quantity: item.quantity,
         unitPrice: item.unitPrice,
         totalPrice: item.totalPrice,
-        taxable: item.taxable ?? null,
+        taxable: taxableFlags[i],
         allocatedTax: allocation.allocatedTax,
         amountWithTax: allocation.amountWithTax,
-        suggestedCategoryId,
-        suggestedCategoryName,
-        classificationType,
-        confidence,
+        suggestedCategoryId: r.suggestedCategoryId,
+        suggestedCategoryName: r.suggestedCategoryName,
+        classificationType: r.classificationType,
+        confidence: r.confidence,
       });
     }
 
