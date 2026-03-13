@@ -626,7 +626,7 @@ Phases 1-5.5 ✅ COMPLETE
      |     (batch endpoints, re-classification, batch service)
      |     (batch classify triggers fallback chain for low-confidence items)
      |
-     ├── Phase 7: Review UI — Receipt Views
+     ├── Phase 7: Review UI — Receipt Views ✅
      |     (filtering, selection, bulk actions, detail pages)
      |     (depends on Phase 6 for bulk action backends)
      |
