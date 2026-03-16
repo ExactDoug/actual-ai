@@ -103,6 +103,7 @@ export function renderReceiptQueue(
           <th><span class="col-source src-receipt">Receipt</span><a href="/receipts${qs({ sortBy: 'date', sortDir: filter.sortBy === 'date' && filter.sortDir === 'desc' ? 'asc' : 'desc' })}">Date</a></th>
           <th><span class="col-source src-budget">Budget</span>Tx Date</th>
           <th><span class="col-source src-receipt">Receipt</span><a href="/receipts${qs({ sortBy: 'amount', sortDir: filter.sortBy === 'amount' && filter.sortDir === 'desc' ? 'asc' : 'desc' })}">Amount</a></th>
+          <th><span class="col-source src-budget">Budget</span>Amount</th>
           <th><span class="col-source src-budget">Budget</span>Category</th>
           <th><span class="col-source src-receipt">Receipt</span>Items</th>
           <th><a href="/receipts${qs({ sortBy: 'matchedAt', sortDir: filter.sortBy === 'matchedAt' && filter.sortDir === 'desc' ? 'asc' : 'desc' })}">Matched</a></th>
@@ -118,6 +119,7 @@ export function renderReceiptQueue(
             <td>${r.receiptDate ?? ''}</td>
             <td class="tx-date"><span class="loading-dots">···</span></td>
             <td class="amount negative">${formatAmount(r.totalAmount as number)}</td>
+            <td class="tx-amount"><span class="loading-dots">···</span></td>
             <td class="tx-category"><span class="loading-dots">···</span></td>
             <td>${r.lineItemCount ?? 0}</td>
             <td>${formatDate(String(r.matchedAt ?? ''))}</td>
@@ -214,7 +216,19 @@ export function renderReceiptQueue(
             if (!info) { clearDots(row); return; }
             var payeeCell = row.querySelector('.tx-payee');
             var dateCell = row.querySelector('.tx-date');
+            var amtCell = row.querySelector('.tx-amount');
             var catCell = row.querySelector('.tx-category');
+            if (amtCell) {
+              if (info.amount != null) {
+                var dollars = (Math.abs(info.amount) / 100).toFixed(2);
+                amtCell.textContent = (info.amount < 0 ? '-' : '') + '$' + dollars;
+                amtCell.style.color = info.amount < 0 ? '#f87171' : '#4ade80';
+                amtCell.style.fontSize = '0.85rem';
+              } else {
+                amtCell.textContent = '\u2014';
+                amtCell.style.color = '#555';
+              }
+            }
             if (payeeCell) {
               payeeCell.textContent = info.payeeName || info.importedPayee || '';
               payeeCell.style.color = '#ccc';
@@ -364,6 +378,7 @@ export function renderReceiptDetail(
             <div class="detail-row"><span class="detail-label">Payee</span><span id="txPayee" style="color:#888;font-size:0.85rem;">loading...</span></div>
             <div class="detail-row"><span class="detail-label">Transaction Date</span><span id="txDate" style="color:#888;font-size:0.85rem;">loading...</span></div>
             <div class="detail-row"><span class="detail-label">Account</span><span id="txAccount" style="color:#888;font-size:0.85rem;">loading...</span></div>
+            <div class="detail-row"><span class="detail-label">Transaction Amount</span><span id="txAmount" style="color:#888;font-size:0.85rem;">loading...</span></div>
             <div class="detail-row"><span class="detail-label">Match Confidence</span><span class="badge confidence-${match.matchConfidence}">${match.matchConfidence}</span></div>
             <div class="detail-row"><span class="detail-label">Matched At</span><span>${formatDate(String(match.matchedAt ?? ''))}</span></div>
             <div class="detail-row"><span class="detail-label">Current Category</span><span id="txCategoryInfo" style="color:#888;font-size:0.8rem;">loading...</span></div>
@@ -448,6 +463,7 @@ export function renderReceiptDetail(
         const payeeEl = document.getElementById('txPayee');
         const dateEl = document.getElementById('txDate');
         const accountEl = document.getElementById('txAccount');
+        const amountEl = document.getElementById('txAmount');
         try {
           const txId = '${esc(String(match.transactionId ?? ''))}';
           const res = await fetch('/api/transactions/' + txId + '/details');
@@ -456,6 +472,7 @@ export function renderReceiptDetail(
             if (payeeEl) payeeEl.textContent = '(unavailable)';
             if (dateEl) dateEl.textContent = '(unavailable)';
             if (accountEl) accountEl.textContent = '(unavailable)';
+            if (amountEl) amountEl.textContent = '(unavailable)';
             return;
           }
           const data = await res.json();
@@ -471,6 +488,15 @@ export function renderReceiptDetail(
           if (accountEl) {
             accountEl.textContent = data.accountName || '(unknown)';
             accountEl.style.color = '#ccc';
+          }
+          if (amountEl) {
+            if (data.amount != null) {
+              var dollars = (Math.abs(data.amount) / 100).toFixed(2);
+              amountEl.textContent = (data.amount < 0 ? '-' : '') + '$' + dollars;
+              amountEl.style.color = data.amount < 0 ? '#f87171' : '#4ade80';
+            } else {
+              amountEl.textContent = '(unknown)';
+            }
           }
           // Populate category
           if (el) {

@@ -401,6 +401,7 @@ if (REVIEW_UI_ENABLED) {
           : dateStr;
 
         const result: {
+          amount?: number;
           date?: string;
           payeeName?: string;
           importedPayee?: string;
@@ -410,6 +411,7 @@ if (REVIEW_UI_ENABLED) {
           isParent?: boolean;
           subtransactions?: { amount: number; categoryId?: string; categoryName?: string }[];
         } = {
+          amount: tx.amount,
           date: formattedDate,
           payeeName: tx.payee ? payeeMap.get(tx.payee) ?? '' : '',
           importedPayee: tx.imported_payee ?? '',
@@ -474,6 +476,7 @@ if (REVIEW_UI_ENABLED) {
 
         const requestedSet = new Set(transactionIds);
         const result: Record<string, {
+          amount?: number;
           date?: string;
           payeeName?: string;
           importedPayee?: string;
@@ -494,6 +497,7 @@ if (REVIEW_UI_ENABLED) {
 
           const acctId = txAccountMap.get(tx.id);
           const entry: typeof result[string] = {
+            amount: tx.amount,
             date: formattedDate,
             payeeName: tx.payee ? payeeMap.get(tx.payee) ?? '' : '',
             importedPayee: tx.imported_payee ?? '',

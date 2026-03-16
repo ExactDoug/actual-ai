@@ -48,6 +48,7 @@ export interface WebServerDeps {
     rematchSummary: { matched: number; exact: number; probable: number; possible: number; unmatched: number };
   }>;
   getTransactionDetails?: (transactionId: string) => Promise<{
+    amount?: number;
     date?: string;
     payeeName?: string;
     importedPayee?: string;
@@ -58,6 +59,7 @@ export interface WebServerDeps {
     subtransactions?: { amount: number; categoryId?: string; categoryName?: string }[];
   } | null>;
   getTransactionsBulk?: (transactionIds: string[]) => Promise<Record<string, {
+    amount?: number;
     date?: string;
     payeeName?: string;
     importedPayee?: string;
