@@ -40,12 +40,16 @@ import {
   receiptDateToleranceDays,
   receiptFallbackWebSearch,
   receiptFetchDaysBack,
+  receiptFuzzyMatchThreshold,
   receiptMatchToleranceCents,
+  receiptMaxDateGapDays,
+  receiptStructuralToleranceDays,
   receiptTag,
   serverURL,
   valueSerpApiKey,
   veryfiUsername,
   veryfiPassword,
+  veryfiProfile,
   veryfiTotpSecret,
 } from './config';
 import ActualAiService from './actual-ai';
@@ -187,7 +191,12 @@ const receiptStore = new ReceiptStore(dataDir);
 const connectorRegistry = new ConnectorRegistry();
 
 if (receiptConnectors.includes('veryfi') && veryfiUsername && veryfiTotpSecret) {
-  connectorRegistry.register(new VeryfiAdapter(veryfiUsername, veryfiPassword, veryfiTotpSecret));
+  connectorRegistry.register(new VeryfiAdapter(
+    veryfiUsername,
+    veryfiPassword,
+    veryfiTotpSecret,
+    veryfiProfile || undefined,
+  ));
 }
 
 const receiptFetchService = new ReceiptFetchService(
@@ -201,6 +210,9 @@ const matchingService = new MatchingService(
   receiptMatchToleranceCents,
   receiptDateToleranceDays,
   receiptAutoMatch,
+  receiptStructuralToleranceDays,
+  receiptMaxDateGapDays,
+  receiptFuzzyMatchThreshold,
 );
 
 const lineItemClassifier = new LineItemClassifier(

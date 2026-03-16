@@ -19,6 +19,8 @@ export interface WebServerDeps {
   onTriggerClassify: () => Promise<void>;
   getCategories: () => Promise<{ id: string; name: string; group: string }[]>;
   getConfig: () => Record<string, unknown>;
+  getCronStatus?: () => { enabled: boolean; schedule: string; lastRunId?: string };
+  setCronEnabled?: (enabled: boolean) => boolean;
   receiptStore?: ReceiptStore;
   connectorRegistry?: ConnectorRegistry;
   onReceiptFetch?: () => Promise<{ fetched: number; errors: Array<{ provider: string; message: string }> }>;
@@ -33,7 +35,22 @@ export interface WebServerDeps {
   onBatchUnmatch?: (request: BatchRequest) => BatchResponse;
   onBatchReject?: (request: BatchRequest) => BatchResponse;
   onBatchReclassify?: (request: BatchRequest) => Promise<BatchResponse>;
+  getVeryfiProfiles?: () => Promise<Array<{
+    username: string;
+    companyName: string;
+    accountId: number;
+    isPrimary: boolean;
+    type: string;
+    displayType: string;
+  }>>;
+  onResetAndRematch?: () => Promise<{
+    reset: number;
+    preserved: number;
+    resetErrors: Array<{ matchId: string; error: string }>;
+    rematchSummary: { matched: number; exact: number; probable: number; possible: number; unmatched: number };
+  }>;
   getTransactionDetails?: (transactionId: string) => Promise<{
+    amount?: number;
     date?: string;
     payeeName?: string;
     importedPayee?: string;
@@ -44,6 +61,7 @@ export interface WebServerDeps {
     subtransactions?: { amount: number; categoryId?: string; categoryName?: string }[];
   } | null>;
   getTransactionsBulk?: (transactionIds: string[]) => Promise<Record<string, {
+    amount?: number;
     date?: string;
     payeeName?: string;
     importedPayee?: string;
@@ -187,6 +205,30 @@ export function createWebServer(deps: WebServerDeps): express.Express {
     res.json(deps.getConfig());
   });
 
+  // --- Cron control ---
+  app.get('/api/cron/status', (_req: Request, res: Response) => {
+    if (!deps.getCronStatus) {
+      res.status(501).json({ error: 'Cron status not available' });
+      return;
+    }
+    res.json(deps.getCronStatus());
+  });
+
+  app.post('/api/cron/toggle', (req: Request, res: Response) => {
+    if (!deps.setCronEnabled) {
+      res.status(501).json({ error: 'Cron control not available' });
+      return;
+    }
+    const { enabled } = req.body as { enabled?: boolean };
+    if (typeof enabled !== 'boolean') {
+      res.status(400).json({ error: 'enabled (boolean) is required' });
+      return;
+    }
+    const newState = deps.setCronEnabled(enabled);
+    console.log(`Cron ${newState ? 'enabled' : 'disabled'} via UI`);
+    res.json({ enabled: newState });
+  });
+
   // --- Receipt Page Routes ---
   if (deps.receiptStore) {
     const receiptStore = deps.receiptStore;
@@ -284,6 +326,20 @@ export function createWebServer(deps: WebServerDeps): express.Express {
 
     app.get('/api/receipt-stats', (_req: Request, res: Response) => {
       res.json(receiptStore.getStats());
+    });
+
+    app.get('/api/veryfi/profiles', async (_req: Request, res: Response) => {
+      if (!deps.getVeryfiProfiles) {
+        res.status(501).json({ error: 'Veryfi profiles not configured' });
+        return;
+      }
+      try {
+        const profiles = await deps.getVeryfiProfiles();
+        res.json({ profiles });
+      } catch (error) {
+        console.error('Error fetching Veryfi profiles:', error);
+        res.status(500).json({ error: 'Failed to fetch Veryfi profiles' });
+      }
     });
 
     // Write endpoints for receipt operations
@@ -488,6 +544,21 @@ export function createWebServer(deps: WebServerDeps): express.Express {
       } catch (error) {
         console.error('Batch reclassify error:', error);
         res.status(500).json({ error: 'Batch reclassify failed' });
+      }
+    });
+
+    // --- Reset & Rematch ---
+    app.post('/api/batch/reset-rematch', async (_req: Request, res: Response) => {
+      if (!deps.onResetAndRematch) {
+        res.status(501).json({ error: 'Reset & rematch not configured' });
+        return;
+      }
+      try {
+        const result = await deps.onResetAndRematch();
+        res.json(result);
+      } catch (error) {
+        console.error('Reset & rematch error:', error);
+        res.status(500).json({ error: 'Reset & rematch failed' });
       }
     });
 

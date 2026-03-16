@@ -144,8 +144,12 @@ if (!isFeatureEnabled('classifyOnStartup') && !cron.validate(cronSchedule)) {
   }
 }
 
+let cronTask: ReturnType<typeof cron.schedule> | null = null;
+let cronEnabled = true;
+
 if (cron.validate(cronSchedule)) {
-  cron.schedule(cronSchedule, async () => {
+  cronTask = cron.schedule(cronSchedule, async () => {
+    if (!cronEnabled) return;
     await runClassification();
   });
 }
@@ -227,6 +231,22 @@ if (REVIEW_UI_ENABLED) {
     receiptStore: isFeatureEnabled('receiptMatching') ? receiptStore : undefined,
     connectorRegistry: isFeatureEnabled('receiptMatching') ? connectorRegistry : undefined,
 
+    getVeryfiProfiles: isFeatureEnabled('receiptMatching') && connectorRegistry.get('veryfi')
+      ? async () => {
+        const adapter = connectorRegistry.get('veryfi') as import('./src/receipt/veryfi-adapter').default;
+        const client = await adapter.getClient();
+        const profiles = await client.getProfiles();
+        return profiles.map((p) => ({
+          username: p.username,
+          companyName: p.companyName,
+          accountId: p.accountId,
+          isPrimary: p.isPrimary,
+          type: p.type,
+          displayType: p.displayType,
+        }));
+      }
+      : undefined,
+
     onReceiptFetch: isFeatureEnabled('receiptMatching')
       ? () => receiptFetchService.fetchAll()
       : undefined,
@@ -299,6 +319,44 @@ if (REVIEW_UI_ENABLED) {
       ? (request) => batchService.batchReject(request)
       : undefined,
 
+    onResetAndRematch: isFeatureEnabled('receiptMatching')
+      ? async () => {
+        // Step 1: Reset all non-applied matches
+        const { reset, preserved, errors: resetErrors } = batchService.resetForRematch();
+
+        // Step 2: Fetch fresh transactions and re-run matching
+        const tempApi = await createTempApiService();
+        try {
+          const accounts = await tempApi.getAccounts();
+          let transactions: TransactionEntity[] = [];
+          for (const account of accounts) {
+            transactions = transactions.concat(
+              await tempApi.getTransactions(account.id, '1990-01-01', '2030-01-01'),
+            );
+          }
+          const payees = await tempApi.getPayees();
+          const payeeMap = new Map<string, string>();
+          for (const p of payees) {
+            if (p.id && p.name) payeeMap.set(p.id, p.name);
+          }
+          const matchable = transactions.filter((t) => !t.is_parent && t.amount !== 0);
+          const rematchSummary = matchingService.matchAll(matchable.map((t) => ({
+            id: t.id,
+            amount: t.amount,
+            date: t.date,
+            payee: t.payee ? payeeMap.get(t.payee) : undefined,
+            imported_payee: t.imported_payee ?? undefined,
+            hasCategory: !!t.category,
+            categoryId: t.category ?? undefined,
+          })));
+
+          return { reset, preserved, resetErrors, rematchSummary };
+        } finally {
+          await tempApi.shutdown();
+        }
+      }
+      : undefined,
+
     onBatchReclassify: isFeatureEnabled('lineItemClassification')
       ? async (request) => {
         const { flatCats, groupsForPrompt, ruleDescriptions, shutdown } = await fetchClassificationContext();
@@ -347,6 +405,7 @@ if (REVIEW_UI_ENABLED) {
           : dateStr;
 
         const result: {
+          amount?: number;
           date?: string;
           payeeName?: string;
           importedPayee?: string;
@@ -356,6 +415,7 @@ if (REVIEW_UI_ENABLED) {
           isParent?: boolean;
           subtransactions?: { amount: number; categoryId?: string; categoryName?: string }[];
         } = {
+          amount: tx.amount,
           date: formattedDate,
           payeeName: tx.payee ? payeeMap.get(tx.payee) ?? '' : '',
           importedPayee: tx.imported_payee ?? '',
@@ -420,6 +480,7 @@ if (REVIEW_UI_ENABLED) {
 
         const requestedSet = new Set(transactionIds);
         const result: Record<string, {
+          amount?: number;
           date?: string;
           payeeName?: string;
           importedPayee?: string;
@@ -440,6 +501,7 @@ if (REVIEW_UI_ENABLED) {
 
           const acctId = txAccountMap.get(tx.id);
           const entry: typeof result[string] = {
+            amount: tx.amount,
             date: formattedDate,
             payeeName: tx.payee ? payeeMap.get(tx.payee) ?? '' : '',
             importedPayee: tx.imported_payee ?? '',
@@ -468,6 +530,19 @@ if (REVIEW_UI_ENABLED) {
       }
     },
 
+    getCronStatus() {
+      return {
+        enabled: cronEnabled,
+        schedule: cronSchedule,
+        lastRunId: currentRunId ?? undefined,
+      };
+    },
+
+    setCronEnabled(enabled: boolean) {
+      cronEnabled = enabled;
+      return cronEnabled;
+    },
+
     getConfig() {
       return {
         llmProvider,
@@ -476,6 +551,7 @@ if (REVIEW_UI_ENABLED) {
         serverURL,
         budgetId,
         cronSchedule,
+        cronEnabled,
         dryRun: isFeatureEnabled('dryRun'),
         features: {
           classifyOnStartup: isFeatureEnabled('classifyOnStartup'),

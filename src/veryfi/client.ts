@@ -8,6 +8,7 @@
 
 import {
   VeryfiCredentials,
+  VeryfiProfile,
   VeryfiReceipt,
   VeryfiReceiptFilters,
   VeryfiLineItem,
@@ -15,7 +16,7 @@ import {
   VeryfiCategory,
   VeryfiTag,
 } from './types';
-import { authenticate } from './auth';
+import { authenticate, switchProfile as authSwitchProfile } from './auth';
 
 // ── Errors ──────────────────────────────────────────────────────────
 
@@ -88,6 +89,11 @@ export class VeryfiClient {
   private authPassword?: string;
   private authTotpSecret?: string;
 
+  // Profile state
+  private cookies: string;
+  private profiles: VeryfiProfile[] | null = null;
+  private activeProfile: VeryfiProfile | null = null;
+
   constructor(
     credentials: VeryfiCredentials,
     baseUrl = 'https://iapi.veryfi.com/api/v7',
@@ -95,6 +101,7 @@ export class VeryfiClient {
   ) {
     this.clientId = credentials.clientId;
     this.veryfiSession = credentials.veryfiSession;
+    this.cookies = credentials.cookies;
     this.baseUrl = baseUrl.replace(/\/+$/, '');
     this.rateDelay = 1000 / rateLimitRps;
   }
@@ -336,6 +343,90 @@ export class VeryfiClient {
   async getAccounts(): Promise<Record<string, unknown>[]> {
     const data = await this.get('/accounts/');
     return (data.accounts ?? []) as Record<string, unknown>[];
+  }
+
+  // ── Profiles ──────────────────────────────────────────────────────
+
+  /** List available profiles with fields needed for switching.
+   *  Results are cached after the first call. Pass refresh=true to reload. */
+  async getProfiles(refresh = false): Promise<VeryfiProfile[]> {
+    if (this.profiles !== null && !refresh) {
+      return this.profiles;
+    }
+
+    const accounts = await this.getAccounts();
+    this.profiles = accounts.map((a) => ({
+      username: a.username as string,
+      apiKey: (a.api_key as string) ?? '',
+      companyName: (a.company_name as string) ?? '',
+      accountId: a.id as number,
+      companyId: (a.company as Record<string, unknown>)?.id as number | undefined,
+      isPrimary: Boolean(a.is_primary),
+      type: (a.type as string) ?? '',
+      displayType: (a.display_type as string) ?? '',
+    }));
+    return this.profiles;
+  }
+
+  /** Get the currently active profile (set after switchProfile). */
+  getActiveProfile(): VeryfiProfile | null {
+    return this.activeProfile;
+  }
+
+  /** Find a profile by username, company name substring, or account ID. */
+  async resolveProfile(identifier: string): Promise<VeryfiProfile> {
+    const profiles = await this.getProfiles();
+
+    // Exact username match
+    for (const p of profiles) {
+      if (p.username === identifier) return p;
+    }
+
+    // Account ID match
+    const aid = parseInt(identifier, 10);
+    if (Number.isFinite(aid)) {
+      for (const p of profiles) {
+        if (p.accountId === aid) return p;
+      }
+    }
+
+    // Case-insensitive company name substring match
+    const lower = identifier.toLowerCase();
+    const matches = profiles.filter(
+      (p) => p.companyName.toLowerCase().includes(lower),
+    );
+    if (matches.length === 1) return matches[0];
+    if (matches.length > 1) {
+      const names = matches.map((m) => m.companyName);
+      throw new VeryfiError(
+        `Ambiguous profile '${identifier}' matches ${matches.length} profiles: ${names.join(', ')}. Use the exact username instead.`,
+      );
+    }
+
+    const available = profiles.map(
+      (p) => `${p.username} (${p.companyName})`,
+    );
+    throw new VeryfiError(
+      `No profile matching '${identifier}'. Available: ${available.join(', ')}`,
+    );
+  }
+
+  /** Switch to a different profile. All subsequent API calls will use the new profile. */
+  async switchProfile(identifier: string): Promise<VeryfiProfile> {
+    const profile = await this.resolveProfile(identifier);
+
+    const newCreds = await authSwitchProfile(
+      this.cookies,
+      profile.username,
+      profile.apiKey,
+    );
+
+    this.clientId = newCreds.clientId;
+    this.veryfiSession = newCreds.veryfiSession;
+    this.activeProfile = profile;
+
+    console.log(`Veryfi: switched to profile '${profile.companyName}' (${profile.username})`);
+    return profile;
   }
 
   // ── Health check ────────────────────────────────────────────────

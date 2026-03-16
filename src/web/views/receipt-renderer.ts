@@ -87,6 +87,8 @@ export function renderReceiptQueue(
       <button class="btn btn-apply" onclick="batchAction('apply')">Apply</button>
       <button class="btn btn-reject" onclick="batchAction('reject')">Reject</button>
       <button class="btn" style="background:#3a3d52;color:#ccc;" onclick="batchAction('unmatch')">Unmatch</button>
+      <span style="border-left:1px solid #444;margin:0 0.5rem;"></span>
+      <button class="btn" style="background:#7c2d12;color:#fed7aa;" onclick="resetAndRematch()">Reset &amp; Rematch All</button>
     </div>
 
     <div class="card" style="padding: 0; overflow-x: auto;">
@@ -101,6 +103,7 @@ export function renderReceiptQueue(
           <th><span class="col-source src-receipt">Receipt</span><a href="/receipts${qs({ sortBy: 'date', sortDir: filter.sortBy === 'date' && filter.sortDir === 'desc' ? 'asc' : 'desc' })}">Date</a></th>
           <th><span class="col-source src-budget">Budget</span>Tx Date</th>
           <th><span class="col-source src-receipt">Receipt</span><a href="/receipts${qs({ sortBy: 'amount', sortDir: filter.sortBy === 'amount' && filter.sortDir === 'desc' ? 'asc' : 'desc' })}">Amount</a></th>
+          <th><span class="col-source src-budget">Budget</span>Amount</th>
           <th><span class="col-source src-budget">Budget</span>Category</th>
           <th><span class="col-source src-receipt">Receipt</span>Items</th>
           <th><a href="/receipts${qs({ sortBy: 'matchedAt', sortDir: filter.sortBy === 'matchedAt' && filter.sortDir === 'desc' ? 'asc' : 'desc' })}">Matched</a></th>
@@ -116,6 +119,7 @@ export function renderReceiptQueue(
             <td>${r.receiptDate ?? ''}</td>
             <td class="tx-date"><span class="loading-dots">···</span></td>
             <td class="amount negative">${formatAmount(r.totalAmount as number)}</td>
+            <td class="tx-amount"><span class="loading-dots">···</span></td>
             <td class="tx-category"><span class="loading-dots">···</span></td>
             <td>${r.lineItemCount ?? 0}</td>
             <td>${formatDate(String(r.matchedAt ?? ''))}</td>
@@ -154,6 +158,36 @@ export function renderReceiptQueue(
           }
         } catch (err) { showToast('error', String(err)); }
       }
+      async function resetAndRematch() {
+        var msg = 'This will:\\n'
+          + '1. Unmatch ALL non-applied matches\\n'
+          + '2. Re-run matching with the current algorithm\\n\\n'
+          + 'Applied matches (with splits written to Actual Budget) will be PRESERVED.\\n\\n'
+          + 'Are you sure?';
+        if (!confirm(msg)) return;
+        if (!confirm('Final confirmation: Reset and rematch all receipts?')) return;
+        try {
+          showToast('info', 'Resetting and rematching... this may take a moment.');
+          var res = await fetch('/api/batch/reset-rematch', { method: 'POST', headers: { 'Content-Type': 'application/json' } });
+          var data = await res.json();
+          if (res.ok) {
+            var summary = 'Reset: ' + data.reset + ' unmatched'
+              + (data.preserved > 0 ? ', ' + data.preserved + ' preserved (applied)' : '')
+              + '\\nRematched: ' + data.rematchSummary.matched
+              + ' (' + data.rematchSummary.exact + ' exact, '
+              + data.rematchSummary.probable + ' probable, '
+              + data.rematchSummary.possible + ' possible)'
+              + ', ' + data.rematchSummary.unmatched + ' unmatched';
+            if (data.resetErrors && data.resetErrors.length > 0) {
+              summary += '\\n' + data.resetErrors.length + ' errors during reset';
+            }
+            showToast('success', summary);
+            setTimeout(function() { location.reload(); }, 2000);
+          } else {
+            showToast('error', data.error || 'Reset & rematch failed');
+          }
+        } catch (err) { showToast('error', String(err)); }
+      }
       function showToast(type, msg) {
         const t = document.getElementById('toast');
         t.className = 'toast ' + type;
@@ -182,7 +216,19 @@ export function renderReceiptQueue(
             if (!info) { clearDots(row); return; }
             var payeeCell = row.querySelector('.tx-payee');
             var dateCell = row.querySelector('.tx-date');
+            var amtCell = row.querySelector('.tx-amount');
             var catCell = row.querySelector('.tx-category');
+            if (amtCell) {
+              if (info.amount != null) {
+                var dollars = (Math.abs(info.amount) / 100).toFixed(2);
+                amtCell.textContent = (info.amount < 0 ? '-' : '') + '$' + dollars;
+                amtCell.style.color = info.amount < 0 ? '#f87171' : '#4ade80';
+                amtCell.style.fontSize = '0.85rem';
+              } else {
+                amtCell.textContent = '\u2014';
+                amtCell.style.color = '#555';
+              }
+            }
             if (payeeCell) {
               payeeCell.textContent = info.payeeName || info.importedPayee || '';
               payeeCell.style.color = '#ccc';
@@ -332,6 +378,7 @@ export function renderReceiptDetail(
             <div class="detail-row"><span class="detail-label">Payee</span><span id="txPayee" style="color:#888;font-size:0.85rem;">loading...</span></div>
             <div class="detail-row"><span class="detail-label">Transaction Date</span><span id="txDate" style="color:#888;font-size:0.85rem;">loading...</span></div>
             <div class="detail-row"><span class="detail-label">Account</span><span id="txAccount" style="color:#888;font-size:0.85rem;">loading...</span></div>
+            <div class="detail-row"><span class="detail-label">Transaction Amount</span><span id="txAmount" style="color:#888;font-size:0.85rem;">loading...</span></div>
             <div class="detail-row"><span class="detail-label">Match Confidence</span><span class="badge confidence-${match.matchConfidence}">${match.matchConfidence}</span></div>
             <div class="detail-row"><span class="detail-label">Matched At</span><span>${formatDate(String(match.matchedAt ?? ''))}</span></div>
             <div class="detail-row"><span class="detail-label">Current Category</span><span id="txCategoryInfo" style="color:#888;font-size:0.8rem;">loading...</span></div>
@@ -416,6 +463,7 @@ export function renderReceiptDetail(
         const payeeEl = document.getElementById('txPayee');
         const dateEl = document.getElementById('txDate');
         const accountEl = document.getElementById('txAccount');
+        const amountEl = document.getElementById('txAmount');
         try {
           const txId = '${esc(String(match.transactionId ?? ''))}';
           const res = await fetch('/api/transactions/' + txId + '/details');
@@ -424,6 +472,7 @@ export function renderReceiptDetail(
             if (payeeEl) payeeEl.textContent = '(unavailable)';
             if (dateEl) dateEl.textContent = '(unavailable)';
             if (accountEl) accountEl.textContent = '(unavailable)';
+            if (amountEl) amountEl.textContent = '(unavailable)';
             return;
           }
           const data = await res.json();
@@ -439,6 +488,15 @@ export function renderReceiptDetail(
           if (accountEl) {
             accountEl.textContent = data.accountName || '(unknown)';
             accountEl.style.color = '#ccc';
+          }
+          if (amountEl) {
+            if (data.amount != null) {
+              var dollars = (Math.abs(data.amount) / 100).toFixed(2);
+              amountEl.textContent = (data.amount < 0 ? '-' : '') + '$' + dollars;
+              amountEl.style.color = data.amount < 0 ? '#f87171' : '#4ade80';
+            } else {
+              amountEl.textContent = '(unknown)';
+            }
           }
           // Populate category
           if (el) {
@@ -959,12 +1017,37 @@ function receiptLayout(title: string, content: string, activeNav: string): strin
     <a href="/receipts" class="${activeNav === 'queue' ? 'active' : ''}">Queue</a>
     <a href="/receipts/unmatched" class="${activeNav === 'unmatched' ? 'active' : ''}">Unmatched</a>
     <span class="spacer"></span>
+    <span id="cronToggle" title="Click to toggle cron job" style="cursor:pointer;font-size:0.8rem;color:#888;padding:0.2rem 0.5rem;border:1px solid #3a3d52;border-radius:4px;user-select:none;">Cron: ...</span>
     <a href="/logout" class="logout">Logout</a>
   </nav>
   <div class="container">
     ${content}
   </div>
   <div class="toast" id="toast"></div>
+  <script>
+  (function() {
+    var el = document.getElementById('cronToggle');
+    if (!el) return;
+    function update(enabled) {
+      el.textContent = 'Cron: ' + (enabled ? 'ON' : 'OFF');
+      el.style.color = enabled ? '#4ade80' : '#f87171';
+      el.style.borderColor = enabled ? '#166534' : '#7f1d1d';
+      el.title = 'Click to ' + (enabled ? 'pause' : 'resume') + ' the cron job';
+    }
+    fetch('/api/cron/status').then(function(r) { return r.json(); }).then(function(d) {
+      update(d.enabled);
+    }).catch(function() { el.textContent = 'Cron: ?'; });
+    el.addEventListener('click', function() {
+      var current = el.textContent.indexOf('ON') !== -1;
+      fetch('/api/cron/toggle', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ enabled: !current })
+      }).then(function(r) { return r.json(); }).then(function(d) {
+        update(d.enabled);
+      }).catch(function() { el.textContent = 'Cron: error'; });
+    });
+  })();
+  </script>
 </body>
 </html>`;
 }

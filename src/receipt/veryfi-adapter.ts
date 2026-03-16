@@ -15,14 +15,16 @@ class VeryfiAdapter implements ReceiptConnector {
   private readonly username: string;
   private readonly password: string;
   private readonly totpSecret: string;
+  private readonly profile: string | undefined;
 
   private client: VeryfiClient | null = null;
   private credentials: VeryfiCredentials | null = null;
 
-  constructor(username: string, password: string, totpSecret: string) {
+  constructor(username: string, password: string, totpSecret: string, profile?: string) {
     this.username = username;
     this.password = password;
     this.totpSecret = totpSecret;
+    this.profile = profile;
   }
 
   // ── Internal helpers ──────────────────────────────────────────────
@@ -37,9 +39,19 @@ class VeryfiAdapter implements ReceiptConnector {
     if (!this.client) {
       this.client = new VeryfiClient(this.credentials);
       this.client.setAuthCredentials(this.username, this.password, this.totpSecret);
+
+      // Switch to configured profile if specified
+      if (this.profile) {
+        await this.client.switchProfile(this.profile);
+      }
     }
 
     return this.client;
+  }
+
+  /** Get the underlying VeryfiClient (for profile listing, etc.). */
+  async getClient(): Promise<VeryfiClient> {
+    return this.ensureClient();
   }
 
   /** Convert a VeryfiReceipt's stamp_date (or fallback) to YYYY-MM-DD. */
