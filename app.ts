@@ -10,6 +10,7 @@ import {
 import actualAi from './src/container';
 import {
   transactionProcessor as txProcessor,
+  classificationStore,
   receiptFetchService,
   receiptStore,
   connectorRegistry,
@@ -18,7 +19,6 @@ import {
   splitTransactionService,
   batchService,
 } from './src/container';
-import ClassificationStore from './src/web/classification-store';
 import { createWebServer } from './src/web/server';
 import type { UnifiedResponse, APICategoryEntity, APICategoryGroupEntity, RuleDescription } from './src/types';
 import type { TransactionEntity } from '@actual-app/api/@types/loot-core/src/types/models';
@@ -32,7 +32,6 @@ if (!fs.existsSync(dataDir)) {
   fs.mkdirSync(dataDir, { recursive: true });
 }
 
-const classificationStore = new ClassificationStore(dataDir);
 let currentRunId = '';
 
 // Wire the classification callback to capture LLM results

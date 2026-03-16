@@ -300,6 +300,15 @@ class ClassificationStore {
     this.db.prepare("DELETE FROM classifications WHERE transactionId = ? AND status = 'pending'").run(transactionId);
   }
 
+  /** Get transaction IDs that already have a non-rejected classification.
+   *  Used to skip re-classifying transactions that already have a result. */
+  getClassifiedTransactionIds(): Set<string> {
+    const rows = this.db.prepare(
+      "SELECT DISTINCT transactionId FROM classifications WHERE status != 'rejected'",
+    ).all() as { transactionId: string }[];
+    return new Set(rows.map((r) => r.transactionId));
+  }
+
   close(): void {
     this.db.close();
   }
