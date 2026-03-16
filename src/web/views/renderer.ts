@@ -94,6 +94,7 @@ function layout(title: string, content: string, activeNav: string): string {
     <a href="/receipts">Queue</a>
     <span class="spacer"></span>
     <span id="cronToggle" title="Click to toggle cron job" style="cursor:pointer;font-size:0.8rem;color:#888;padding:0.2rem 0.5rem;border:1px solid #3a3d52;border-radius:4px;user-select:none;">Cron: ...</span>
+    <a href="/settings" style="font-size:0.85rem;color:#888;margin-left:0.3rem;" title="Automation Settings">&#9881;</a>
     <a href="/logout" class="logout">Logout</a>
   </nav>
   <div class="container">

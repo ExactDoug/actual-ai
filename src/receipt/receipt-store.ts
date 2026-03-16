@@ -103,6 +103,20 @@ class ReceiptStore {
         updatedAt TEXT NOT NULL DEFAULT (datetime('now'))
       );
 
+      CREATE TABLE IF NOT EXISTS app_settings (
+        key TEXT PRIMARY KEY,
+        value TEXT NOT NULL,
+        updatedAt TEXT NOT NULL DEFAULT (datetime('now'))
+      );
+
+      INSERT OR IGNORE INTO app_settings (key, value) VALUES
+        ('cron.enabled', 'true'),
+        ('cron.autoFetchReceipts', 'true'),
+        ('cron.autoMatchReceipts', 'true'),
+        ('cron.autoClassifyTransactions', 'true'),
+        ('cron.autoClassifyLineItems', 'false'),
+        ('cron.autoApplyHighConfidence', 'false');
+
       INSERT OR IGNORE INTO tax_exempt_categories (namePrefix, reason) VALUES
         ('groceries', 'NM gross receipts tax exemption'),
         ('medical', 'NM gross receipts tax exemption'),
@@ -772,6 +786,42 @@ class ReceiptStore {
         lastSyncReceiptCount = excluded.lastSyncReceiptCount,
         updatedAt = datetime('now')
     `).run(providerId, lastSyncTimestamp, lastSyncReceiptCount);
+  }
+
+  // ---------------------------------------------------------------------------
+  // App settings
+  // ---------------------------------------------------------------------------
+
+  getSetting(key: string): string | null {
+    const row = this.db.prepare(
+      'SELECT value FROM app_settings WHERE key = ?',
+    ).get(key) as { value: string } | undefined;
+    return row?.value ?? null;
+  }
+
+  getSettingBool(key: string, defaultValue = false): boolean {
+    const val = this.getSetting(key);
+    if (val === null) return defaultValue;
+    return val === 'true' || val === '1';
+  }
+
+  setSetting(key: string, value: string): void {
+    this.db.prepare(`
+      INSERT INTO app_settings (key, value, updatedAt)
+      VALUES (?, ?, datetime('now'))
+      ON CONFLICT(key) DO UPDATE SET
+        value = excluded.value,
+        updatedAt = datetime('now')
+    `).run(key, value);
+  }
+
+  getAllSettings(): Record<string, string> {
+    const rows = this.db.prepare('SELECT key, value FROM app_settings').all() as { key: string; value: string }[];
+    const result: Record<string, string> = {};
+    for (const row of rows) {
+      result[row.key] = row.value;
+    }
+    return result;
   }
 
   // ---------------------------------------------------------------------------

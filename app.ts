@@ -79,12 +79,22 @@ txProcessor.setOnClassified(
   },
 );
 
-// Classification runner
+// Helper to read automation settings from SQLite
+function autoSetting(key: string, defaultValue = true): boolean {
+  return receiptStore.getSettingBool(key, defaultValue);
+}
+
+// Classification runner — each step gated by persistent settings
 async function runClassification() {
+  if (!autoSetting('cron.enabled')) {
+    console.log('[cron] Skipping — cron.enabled is false');
+    return;
+  }
+
   currentRunId = crypto.randomUUID();
 
-  // Fetch receipts and run matching before classification
-  if (isFeatureEnabled('receiptMatching')) {
+  // Step 1: Fetch receipts from Veryfi
+  if (isFeatureEnabled('receiptMatching') && autoSetting('cron.autoFetchReceipts')) {
     try {
       const fetchResult = await receiptFetchService.fetchAll();
       if (fetchResult.errors.length > 0) {
@@ -93,9 +103,11 @@ async function runClassification() {
     } catch (err) {
       console.error('Receipt fetch failed (continuing with classification):', err);
     }
+  }
 
+  // Step 2: Match receipts to transactions
+  if (isFeatureEnabled('receiptMatching') && autoSetting('cron.autoMatchReceipts')) {
     try {
-      // Get uncategorized transactions for matching
       const tempApi = await createTempApiService();
       try {
         const accounts = await tempApi.getAccounts();
@@ -105,15 +117,11 @@ async function runClassification() {
             await tempApi.getTransactions(account.id, '1990-01-01', '2030-01-01'),
           );
         }
-        // Build payee ID → name lookup
         const payees = await tempApi.getPayees();
         const payeeMap = new Map<string, string>();
         for (const p of payees) {
           if (p.id && p.name) payeeMap.set(p.id, p.name);
         }
-        // Match receipts against all non-split transactions (including already-categorized ones).
-        // Matches to already-categorized transactions are flagged as overridesExisting
-        // and require explicit user approval before applying.
         const matchable = transactions.filter((t) => !t.is_parent && t.amount !== 0);
         matchingService.matchAll(matchable.map((t) => ({
           id: t.id,
@@ -132,7 +140,10 @@ async function runClassification() {
     }
   }
 
-  await actualAi.classify();
+  // Step 3: LLM transaction classification
+  if (autoSetting('cron.autoClassifyTransactions')) {
+    await actualAi.classify();
+  }
 }
 
 // Start cron
@@ -143,12 +154,8 @@ if (!isFeatureEnabled('classifyOnStartup') && !cron.validate(cronSchedule)) {
   }
 }
 
-let cronTask: ReturnType<typeof cron.schedule> | null = null;
-let cronEnabled = true;
-
 if (cron.validate(cronSchedule)) {
-  cronTask = cron.schedule(cronSchedule, async () => {
-    if (!cronEnabled) return;
+  cron.schedule(cronSchedule, async () => {
     await runClassification();
   });
 }
@@ -529,19 +536,6 @@ if (REVIEW_UI_ENABLED) {
       }
     },
 
-    getCronStatus() {
-      return {
-        enabled: cronEnabled,
-        schedule: cronSchedule,
-        lastRunId: currentRunId ?? undefined,
-      };
-    },
-
-    setCronEnabled(enabled: boolean) {
-      cronEnabled = enabled;
-      return cronEnabled;
-    },
-
     getConfig() {
       return {
         llmProvider,
@@ -550,7 +544,6 @@ if (REVIEW_UI_ENABLED) {
         serverURL,
         budgetId,
         cronSchedule,
-        cronEnabled,
         dryRun: isFeatureEnabled('dryRun'),
         features: {
           classifyOnStartup: isFeatureEnabled('classifyOnStartup'),
