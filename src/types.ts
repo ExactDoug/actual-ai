@@ -57,6 +57,23 @@ export interface ActualApiServiceI {
   createCategoryGroup(name: string): Promise<string>
 
   updateCategoryGroup(id: string, name: string): Promise<void>
+
+  getTransactionById(id: string): Promise<TransactionEntity | undefined>
+
+  deleteTransaction(id: string): Promise<void>
+
+  importTransactionsWithSplits(
+    accountId: string,
+    transactions: Array<{
+      date: string;
+      payee_name?: string;
+      imported_payee?: string;
+      notes?: string;
+      amount: number;
+      cleared?: boolean;
+      subtransactions: Array<{ amount: number; category?: string; notes?: string }>;
+    }>,
+  ): Promise<void>
 }
 
 export interface TransactionServiceI {

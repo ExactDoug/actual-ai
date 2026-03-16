@@ -15,6 +15,11 @@ function cleanJsonResponse(text: string): string {
     return cleaned;
   }
 
+  // Remove single-line comments (// ...) that LLMs sometimes add to JSON
+  cleaned = cleaned.replace(/\/\/[^\n]*/g, '');
+  // Remove trailing commas before } or ] (another common LLM JSON mistake)
+  cleaned = cleaned.replace(/,\s*([}\]])/g, '$1');
+
   // Remove leading characters up to first JSON structure character
   cleaned = cleaned.replace(/^[^{[]*?([{[])/, '$1');
   // Remove trailing characters after last JSON structure character

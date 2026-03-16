@@ -1,0 +1,46 @@
+I need to classify a single item from a receipt that was difficult to categorize in a batch classification.
+
+Store/Vendor: {{vendorName}}
+Transaction Date: {{date}}
+
+Item to classify:
+- Description: {{itemDescription}}
+- Quantity: {{itemQuantity}}
+- Total Price: {{itemTotalPrice}}
+
+{{#if searchResults}}
+Web search results for this item:
+{{searchResults}}
+
+{{/if}}
+{{#if otherItems}}
+Other items on the same receipt (already classified):
+{{#each otherItems}}
+- {{description}} → {{categoryName}} ({{confidence}} confidence)
+{{/each}}
+
+{{/if}}
+Existing categories by group:
+{{#each categoryGroups}}
+GROUP: {{name}} (ID: "{{id}}")
+{{#each categories}}
+* {{name}} (ID: "{{id}}")
+{{/each}}
+{{/each}}
+
+Classify this item into one of the existing categories above.
+
+Provide:
+- itemIndex: {{itemIndex}}
+- type: "existing" (use an existing category ID from above)
+- categoryId: the UUID of the matching category
+- confidence: "high", "medium", or "low"
+
+Use the vendor name, search results, and other items on the same receipt as context to help identify what this item is.
+
+Example response:
+{
+  "items": [
+    { "itemIndex": {{itemIndex}}, "type": "existing", "categoryId": "abc-123", "confidence": "high" }
+  ]
+}

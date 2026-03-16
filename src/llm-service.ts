@@ -1,4 +1,5 @@
-import { generateText, LanguageModel } from 'ai';
+import { generateObject, generateText, LanguageModel } from 'ai';
+import { z } from 'zod';
 import {
   LlmModelFactoryI, LlmServiceI, ToolServiceI, UnifiedResponse,
 } from './types';
@@ -140,6 +141,33 @@ export default class LlmService implements LlmServiceI {
           });
 
           return text.replace(/(\r\n|\n|\r|"|')/gm, '');
+        } finally {
+          clearTimeout(timer);
+        }
+      },
+    );
+  }
+
+  public async generateStructuredOutput<T>(
+    prompt: string,
+    schema: z.ZodType<T>,
+  ): Promise<T> {
+    return this.rateLimiter.executeWithRateLimiting(
+      this.provider,
+      async () => {
+        const controller = new AbortController();
+        const timer = setTimeout(() => controller.abort(), this.timeoutMs);
+        console.log(`Sending structured output request to ${this.provider}`);
+        try {
+          const { object } = await generateObject({
+            model: this.model,
+            prompt,
+            schema,
+            temperature: 0.1,
+            abortSignal: controller.signal,
+          });
+
+          return object;
         } finally {
           clearTimeout(timer);
         }

@@ -255,6 +255,50 @@ class ActualApiService implements ActualApiServiceI {
     }
     await this.actualApiClient.updateCategoryGroup(id, { name });
   }
+
+  public async getTransactionById(id: string): Promise<TransactionEntity | undefined> {
+    const transactions = await this.getTransactions();
+    return transactions.find((t) => t.id === id);
+  }
+
+  public async deleteTransaction(id: string): Promise<void> {
+    if (this.isDryRun) {
+      console.log(`DRY RUN: Would delete transaction ${id}`);
+      return;
+    }
+    await this.actualApiClient.deleteTransaction(id);
+  }
+
+  public async importTransactionsWithSplits(
+    accountId: string,
+    transactions: Array<{
+      date: string;
+      payee_name?: string;
+      imported_payee?: string;
+      notes?: string;
+      amount: number;
+      cleared?: boolean;
+      subtransactions: Array<{ amount: number; category?: string; notes?: string }>;
+    }>,
+  ): Promise<void> {
+    if (this.isDryRun) {
+      console.log(`DRY RUN: Would import ${transactions.length} split transaction(s) into account ${accountId}`);
+      return;
+    }
+    await this.actualApiClient.importTransactions(
+      accountId,
+      transactions.map((t) => ({
+        account: accountId,
+        date: t.date,
+        payee_name: t.payee_name,
+        imported_payee: t.imported_payee,
+        notes: t.notes,
+        amount: t.amount,
+        cleared: t.cleared,
+        subtransactions: t.subtransactions,
+      })),
+    );
+  }
 }
 
 export default ActualApiService;

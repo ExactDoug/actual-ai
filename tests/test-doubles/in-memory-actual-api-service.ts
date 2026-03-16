@@ -171,4 +171,28 @@ export default class InMemoryActualApiService implements ActualApiServiceI {
   setRules(rules: RuleEntity[]): void {
     this.rules = rules;
   }
+
+  async getTransactionById(id: string): Promise<TransactionEntity | undefined> {
+    return Promise.resolve(this.transactions.find((t) => t.id === id));
+  }
+
+  async deleteTransaction(id: string): Promise<void> {
+    this.transactions = this.transactions.filter((t) => t.id !== id);
+    return Promise.resolve();
+  }
+
+  async importTransactionsWithSplits(
+    _accountId: string,
+    _transactions: Array<{
+      date: string;
+      payee_name?: string;
+      imported_payee?: string;
+      notes?: string;
+      amount: number;
+      cleared?: boolean;
+      subtransactions: Array<{ amount: number; category?: string; notes?: string }>;
+    }>,
+  ): Promise<void> {
+    return Promise.resolve();
+  }
 }

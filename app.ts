@@ -8,11 +8,21 @@ import {
   guessedTag, notGuessedTag,
 } from './src/config';
 import actualAi from './src/container';
-import { transactionProcessor as txProcessor } from './src/container';
+import {
+  transactionProcessor as txProcessor,
+  receiptFetchService,
+  receiptStore,
+  connectorRegistry,
+  matchingService,
+  lineItemClassifier,
+  splitTransactionService,
+  batchService,
+} from './src/container';
 import ClassificationStore from './src/web/classification-store';
 import { createWebServer } from './src/web/server';
-import type { UnifiedResponse, APICategoryEntity, APICategoryGroupEntity } from './src/types';
+import type { UnifiedResponse, APICategoryEntity, APICategoryGroupEntity, RuleDescription } from './src/types';
 import type { TransactionEntity } from '@actual-app/api/@types/loot-core/src/types/models';
+import { transformRulesToDescriptions } from './src/utils/rule-utils';
 
 const REVIEW_UI_PORT = parseInt(process.env.REVIEW_UI_PORT ?? '3000', 10);
 const REVIEW_UI_ENABLED = process.env.REVIEW_UI_ENABLED !== 'false';
@@ -73,6 +83,55 @@ txProcessor.setOnClassified(
 // Classification runner
 async function runClassification() {
   currentRunId = crypto.randomUUID();
+
+  // Fetch receipts and run matching before classification
+  if (isFeatureEnabled('receiptMatching')) {
+    try {
+      const fetchResult = await receiptFetchService.fetchAll();
+      if (fetchResult.errors.length > 0) {
+        console.warn(`Receipt fetch completed with ${fetchResult.errors.length} error(s)`);
+      }
+    } catch (err) {
+      console.error('Receipt fetch failed (continuing with classification):', err);
+    }
+
+    try {
+      // Get uncategorized transactions for matching
+      const tempApi = await createTempApiService();
+      try {
+        const accounts = await tempApi.getAccounts();
+        let transactions: TransactionEntity[] = [];
+        for (const account of accounts) {
+          transactions = transactions.concat(
+            await tempApi.getTransactions(account.id, '1990-01-01', '2030-01-01'),
+          );
+        }
+        // Build payee ID → name lookup
+        const payees = await tempApi.getPayees();
+        const payeeMap = new Map<string, string>();
+        for (const p of payees) {
+          if (p.id && p.name) payeeMap.set(p.id, p.name);
+        }
+        // Match receipts against all non-split transactions (including already-categorized ones).
+        // Matches to already-categorized transactions are flagged as overridesExisting
+        // and require explicit user approval before applying.
+        const matchable = transactions.filter((t) => !t.is_parent && t.amount !== 0);
+        matchingService.matchAll(matchable.map((t) => ({
+          id: t.id,
+          amount: t.amount,
+          date: t.date,
+          payee: t.payee ? payeeMap.get(t.payee) : undefined,
+          imported_payee: t.imported_payee ?? undefined,
+          hasCategory: !!t.category,
+        })));
+      } finally {
+        await tempApi.shutdown();
+      }
+    } catch (err) {
+      console.error('Receipt matching failed (continuing with classification):', err);
+    }
+  }
+
   await actualAi.classify();
 }
 
@@ -164,6 +223,78 @@ if (REVIEW_UI_ENABLED) {
       }
     },
 
+    receiptStore: isFeatureEnabled('receiptMatching') ? receiptStore : undefined,
+    connectorRegistry: isFeatureEnabled('receiptMatching') ? connectorRegistry : undefined,
+
+    onReceiptFetch: isFeatureEnabled('receiptMatching')
+      ? () => receiptFetchService.fetchAll()
+      : undefined,
+
+    onReceiptClassify: isFeatureEnabled('lineItemClassification')
+      ? async (matchId: string) => {
+        const { flatCats, groupsForPrompt, ruleDescriptions, shutdown } = await fetchClassificationContext();
+        try {
+          await lineItemClassifier.classifyReceipt(matchId, flatCats, groupsForPrompt, ruleDescriptions);
+        } finally {
+          await shutdown();
+        }
+      }
+      : undefined,
+
+    onReceiptApplySplit: isFeatureEnabled('receiptMatching')
+      ? (matchId: string) => splitTransactionService.applySplit(matchId)
+      : undefined,
+
+    onReceiptUnmatch: isFeatureEnabled('receiptMatching')
+      ? (matchId: string) => matchingService.unmatch(matchId)
+      : undefined,
+
+    onReceiptRematch: isFeatureEnabled('receiptMatching')
+      ? (matchId: string, txId: string) => matchingService.rematch(matchId, txId)
+      : undefined,
+
+    onReceiptRollback: isFeatureEnabled('receiptMatching')
+      ? (matchId: string) => splitTransactionService.rollbackSplit(matchId)
+      : undefined,
+
+    onBatchClassify: isFeatureEnabled('lineItemClassification')
+      ? async (request) => {
+        const { flatCats, groupsForPrompt, ruleDescriptions, shutdown } = await fetchClassificationContext();
+        try {
+          return await batchService.batchClassify(request, flatCats, groupsForPrompt, ruleDescriptions);
+        } finally {
+          await shutdown();
+        }
+      }
+      : undefined,
+
+    onBatchApprove: isFeatureEnabled('receiptMatching')
+      ? (request) => batchService.batchApprove(request)
+      : undefined,
+
+    onBatchApply: isFeatureEnabled('receiptMatching')
+      ? (request) => batchService.batchApply(request)
+      : undefined,
+
+    onBatchUnmatch: isFeatureEnabled('receiptMatching')
+      ? (request) => batchService.batchUnmatch(request)
+      : undefined,
+
+    onBatchReject: isFeatureEnabled('receiptMatching')
+      ? (request) => batchService.batchReject(request)
+      : undefined,
+
+    onBatchReclassify: isFeatureEnabled('lineItemClassification')
+      ? async (request) => {
+        const { flatCats, groupsForPrompt, ruleDescriptions, shutdown } = await fetchClassificationContext();
+        try {
+          return await batchService.batchReclassify(request, flatCats, groupsForPrompt, ruleDescriptions);
+        } finally {
+          await shutdown();
+        }
+      }
+      : undefined,
+
     getConfig() {
       return {
         llmProvider,
@@ -189,10 +320,36 @@ if (REVIEW_UI_ENABLED) {
   });
 }
 
+// Helper to fetch categories, groups, and rules for classification operations
+async function fetchClassificationContext() {
+  const apiService = await createTempApiService();
+  const groups = await apiService.getCategoryGroups();
+  const payees = await apiService.getPayees();
+  const rules = await apiService.getRules();
+  const flatCats: { id: string; name: string; group?: string }[] = [];
+  const groupsForPrompt: { id: string; name: string; categories: { id: string; name: string }[] }[] = [];
+  for (const group of groups) {
+    const cats: { id: string; name: string }[] = [];
+    if ('categories' in group && Array.isArray(group.categories)) {
+      for (const cat of group.categories as { id: string; name: string }[]) {
+        flatCats.push({ id: cat.id, name: cat.name, group: group.name ?? '' });
+        cats.push({ id: cat.id, name: cat.name });
+      }
+    }
+    groupsForPrompt.push({ id: group.id ?? '', name: group.name ?? '', categories: cats });
+  }
+  const ruleDescriptions = transformRulesToDescriptions(rules, groups, payees);
+  return { flatCats, groupsForPrompt, ruleDescriptions, shutdown: () => apiService.shutdown() };
+}
+
 // Helper to create a temporary API connection for applying classifications
 async function createTempApiService(): Promise<typeof actualApiClient> {
+  const applyDir = dataDir + 'apply/';
+  if (!fs.existsSync(applyDir)) {
+    fs.mkdirSync(applyDir, { recursive: true });
+  }
   await actualApiClient.init({
-    dataDir: dataDir + 'apply/',
+    dataDir: applyDir,
     serverURL,
     password,
   });
