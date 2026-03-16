@@ -19,6 +19,8 @@ export interface WebServerDeps {
   onTriggerClassify: () => Promise<void>;
   getCategories: () => Promise<{ id: string; name: string; group: string }[]>;
   getConfig: () => Record<string, unknown>;
+  getCronStatus?: () => { enabled: boolean; schedule: string; lastRunId?: string };
+  setCronEnabled?: (enabled: boolean) => boolean;
   receiptStore?: ReceiptStore;
   connectorRegistry?: ConnectorRegistry;
   onReceiptFetch?: () => Promise<{ fetched: number; errors: Array<{ provider: string; message: string }> }>;
@@ -201,6 +203,30 @@ export function createWebServer(deps: WebServerDeps): express.Express {
 
   app.get('/api/config', (_req: Request, res: Response) => {
     res.json(deps.getConfig());
+  });
+
+  // --- Cron control ---
+  app.get('/api/cron/status', (_req: Request, res: Response) => {
+    if (!deps.getCronStatus) {
+      res.status(501).json({ error: 'Cron status not available' });
+      return;
+    }
+    res.json(deps.getCronStatus());
+  });
+
+  app.post('/api/cron/toggle', (req: Request, res: Response) => {
+    if (!deps.setCronEnabled) {
+      res.status(501).json({ error: 'Cron control not available' });
+      return;
+    }
+    const { enabled } = req.body as { enabled?: boolean };
+    if (typeof enabled !== 'boolean') {
+      res.status(400).json({ error: 'enabled (boolean) is required' });
+      return;
+    }
+    const newState = deps.setCronEnabled(enabled);
+    console.log(`Cron ${newState ? 'enabled' : 'disabled'} via UI`);
+    res.json({ enabled: newState });
   });
 
   // --- Receipt Page Routes ---

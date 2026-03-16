@@ -93,12 +93,37 @@ function layout(title: string, content: string, activeNav: string): string {
     <a href="/receipts/dashboard">Receipts</a>
     <a href="/receipts">Queue</a>
     <span class="spacer"></span>
+    <span id="cronToggle" title="Click to toggle cron job" style="cursor:pointer;font-size:0.8rem;color:#888;padding:0.2rem 0.5rem;border:1px solid #3a3d52;border-radius:4px;user-select:none;">Cron: ...</span>
     <a href="/logout" class="logout">Logout</a>
   </nav>
   <div class="container">
     ${content}
   </div>
   <div class="toast" id="toast"></div>
+  <script>
+  (function() {
+    var el = document.getElementById('cronToggle');
+    if (!el) return;
+    function update(enabled) {
+      el.textContent = 'Cron: ' + (enabled ? 'ON' : 'OFF');
+      el.style.color = enabled ? '#4ade80' : '#f87171';
+      el.style.borderColor = enabled ? '#166534' : '#7f1d1d';
+      el.title = 'Click to ' + (enabled ? 'pause' : 'resume') + ' the cron job';
+    }
+    fetch('/api/cron/status').then(function(r) { return r.json(); }).then(function(d) {
+      update(d.enabled);
+    }).catch(function() { el.textContent = 'Cron: ?'; });
+    el.addEventListener('click', function() {
+      var current = el.textContent.indexOf('ON') !== -1;
+      fetch('/api/cron/toggle', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ enabled: !current })
+      }).then(function(r) { return r.json(); }).then(function(d) {
+        update(d.enabled);
+      }).catch(function() { el.textContent = 'Cron: error'; });
+    });
+  })();
+  </script>
 </body>
 </html>`;
 }

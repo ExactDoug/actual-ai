@@ -144,8 +144,12 @@ if (!isFeatureEnabled('classifyOnStartup') && !cron.validate(cronSchedule)) {
   }
 }
 
+let cronTask: ReturnType<typeof cron.schedule> | null = null;
+let cronEnabled = true;
+
 if (cron.validate(cronSchedule)) {
-  cron.schedule(cronSchedule, async () => {
+  cronTask = cron.schedule(cronSchedule, async () => {
+    if (!cronEnabled) return;
     await runClassification();
   });
 }
@@ -526,6 +530,19 @@ if (REVIEW_UI_ENABLED) {
       }
     },
 
+    getCronStatus() {
+      return {
+        enabled: cronEnabled,
+        schedule: cronSchedule,
+        lastRunId: currentRunId ?? undefined,
+      };
+    },
+
+    setCronEnabled(enabled: boolean) {
+      cronEnabled = enabled;
+      return cronEnabled;
+    },
+
     getConfig() {
       return {
         llmProvider,
@@ -534,6 +551,7 @@ if (REVIEW_UI_ENABLED) {
         serverURL,
         budgetId,
         cronSchedule,
+        cronEnabled,
         dryRun: isFeatureEnabled('dryRun'),
         features: {
           classifyOnStartup: isFeatureEnabled('classifyOnStartup'),
