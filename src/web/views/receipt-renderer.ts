@@ -1133,9 +1133,12 @@ function receiptLayout(title: string, content: string, activeNav: string): strin
     fetch('/api/stats').then(function(r) { return r.json(); }).then(function(d) {
       var badge = document.getElementById('pendingBadge');
       if (!badge) return;
-      var count = (d.totalPending || 0);
-      if (count > 0) {
-        badge.textContent = count + ' pending';
+      var parts = [];
+      if (d.totalPending > 0) parts.push(d.totalPending + ' pending');
+      if (d.failedWrites > 0) parts.push(d.failedWrites + ' failed');
+      if (parts.length > 0) {
+        badge.textContent = parts.join(' | ');
+        if (d.failedWrites > 0) { badge.style.background = '#7f1d1d'; badge.style.color = '#f87171'; }
         badge.style.display = 'inline-block';
       }
     }).catch(function() {});

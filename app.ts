@@ -192,9 +192,12 @@ if (REVIEW_UI_ENABLED) {
               category: c.suggestedCategoryId,
             });
             appliedIds.push(c.id);
+            classificationStore.clearWriteError(c.id);
             applied++;
           } catch (err) {
-            console.error(`Failed to apply classification ${c.id}:`, err);
+            const msg = err instanceof Error ? err.message : String(err);
+            console.error(`Failed to apply classification ${c.id}:`, msg);
+            classificationStore.setWriteError(c.id, msg);
             skipped++;
           }
         }

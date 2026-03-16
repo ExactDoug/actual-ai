@@ -186,7 +186,9 @@ export function createWebServer(deps: WebServerDeps): express.Express {
   });
 
   app.get('/api/stats', (_req: Request, res: Response) => {
-    res.json(deps.classificationStore.getStats());
+    const stats = deps.classificationStore.getStats();
+    const failedWrites = deps.classificationStore.getFailedWriteCount();
+    res.json({ ...stats, failedWrites });
   });
 
   app.post('/api/classify', async (_req: Request, res: Response) => {
