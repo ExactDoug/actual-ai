@@ -11,10 +11,12 @@ USER node
 WORKDIR /opt/node_app
 
 COPY --chown=node:node package.json package-lock.json* ./
-RUN npm ci && npm cache clean --force
+RUN npm ci --include=dev && npm cache clean --force
 ENV PATH=/opt/node_app/node_modules/.bin:$PATH
 
 WORKDIR /opt/node_app/app
 COPY --chown=node:node . .
 RUN npm run build
-CMD [ "npm", "run", "prod" ]
+RUN npm prune --production
+EXPOSE 3000
+CMD [ "sh", "-c", "rm -f /tmp/actual-ai/.actual-ai.lock && exec node --require ./fetch-patch.js dist/app.js" ]
