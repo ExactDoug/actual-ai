@@ -294,7 +294,10 @@ export function createWebServer(deps: WebServerDeps): express.Express {
       let overridesExisting: boolean | undefined;
       if (filter.overridesExisting === '1') overridesExisting = true;
       else if (filter.overridesExisting === '0') overridesExisting = false;
-      const storeFilter = { ...filter, overridesExisting };
+      // Don't pass vendor to the store query — filtering is done client-side
+      // after payee data loads (so it can search both vendor and payee)
+      const { vendor: _vendorSearch, ...storeFilterBase } = filter;
+      const storeFilter = { ...storeFilterBase, overridesExisting };
       const result = receiptStore.listMatchQueue(storeFilter);
       res.send(renderReceiptQueue(result.rows, result.total, filter));
     });

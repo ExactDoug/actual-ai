@@ -64,8 +64,8 @@ export function renderReceiptQueue(
         </select>
       </div>
       <div>
-        <label>Vendor</label>
-        <input type="text" name="vendor" value="${esc(filter.vendor ?? '')}" placeholder="Search...">
+        <label>Vendor / Payee</label>
+        <input type="text" name="vendor" value="${esc(filter.vendor ?? '')}" placeholder="Search vendor or payee...">
       </div>
       <div>
         <label>Date From</label>
@@ -132,6 +132,7 @@ export function renderReceiptQueue(
     ${renderPagination('/receipts', page, totalPages, qs)}
 
     <script>
+      var lastChecked = null;
       function updateCount() {
         document.getElementById('selectedCount').textContent = document.querySelectorAll('.row-check:checked').length;
       }
@@ -139,6 +140,20 @@ export function renderReceiptQueue(
         document.querySelectorAll('.row-check').forEach(cb => { cb.checked = el.checked; });
         updateCount();
       }
+      document.addEventListener('click', function(e) {
+        if (!e.target || !e.target.classList || !e.target.classList.contains('row-check')) return;
+        var boxes = [...document.querySelectorAll('.row-check')];
+        if (e.shiftKey && lastChecked) {
+          var start = boxes.indexOf(lastChecked);
+          var end = boxes.indexOf(e.target);
+          if (start > -1 && end > -1) {
+            var lo = Math.min(start, end), hi = Math.max(start, end);
+            for (var i = lo; i <= hi; i++) { boxes[i].checked = e.target.checked; }
+          }
+        }
+        lastChecked = e.target;
+        updateCount();
+      });
       async function batchAction(action) {
         const ids = [...document.querySelectorAll('.row-check:checked')].map(cb => cb.value);
         if (ids.length === 0) { showToast('error', 'No items selected'); return; }
@@ -255,6 +270,17 @@ export function renderReceiptQueue(
               }
             }
           });
+          // Client-side vendor/payee filtering
+          var vendorSearch = '${esc(filter.vendor ?? '')}'.toLowerCase();
+          if (vendorSearch) {
+            rows.forEach(function(row) {
+              var vendor = (row.querySelector('td:nth-child(5)') || {}).textContent || '';
+              var payee = (row.querySelector('.tx-payee') || {}).textContent || '';
+              var match = vendor.toLowerCase().indexOf(vendorSearch) !== -1
+                || payee.toLowerCase().indexOf(vendorSearch) !== -1;
+              if (!match) row.style.display = 'none';
+            });
+          }
         } catch (e) {
           console.error('Failed to load transaction details', e);
           rows.forEach(clearDots);
