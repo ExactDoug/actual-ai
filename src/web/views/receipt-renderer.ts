@@ -83,9 +83,12 @@ export function renderReceiptQueue(
       <span class="selected-count"><span id="selectedCount">0</span> selected of ${total} total</span>
       <button class="btn btn-primary" onclick="batchAction('classify')">Classify</button>
       <button class="btn btn-approve" onclick="batchAction('approve')">Approve</button>
+      <button class="btn" style="background:#6b5b2d;color:#fde68a;" onclick="batchAction('keep-category')">Keep Category</button>
       <button class="btn btn-apply" onclick="batchAction('apply')">Apply</button>
       <button class="btn btn-reject" onclick="batchAction('reject')">Reject</button>
       <button class="btn" style="background:#3a3d52;color:#ccc;" onclick="batchAction('unmatch')">Unmatch</button>
+      <span style="border-left:1px solid #444;margin:0 0.5rem;"></span>
+      <button class="btn" style="background:#7c2d12;color:#fed7aa;" onclick="resetAndRematch()">Reset &amp; Rematch All</button>
     </div>
 
     <div class="card" style="padding: 0; overflow-x: auto;">
@@ -95,25 +98,33 @@ export function renderReceiptQueue(
           <th><a href="/receipts${qs({ sortBy: 'status', sortDir: filter.sortBy === 'status' && filter.sortDir === 'asc' ? 'desc' : 'asc' })}">Status</a></th>
           <th><a href="/receipts${qs({ sortBy: 'confidence', sortDir: filter.sortBy === 'confidence' && filter.sortDir === 'asc' ? 'desc' : 'asc' })}">Confidence</a></th>
           <th>Override</th>
-          <th><a href="/receipts${qs({ sortBy: 'vendor', sortDir: filter.sortBy === 'vendor' && filter.sortDir === 'asc' ? 'desc' : 'asc' })}">Vendor</a></th>
-          <th><a href="/receipts${qs({ sortBy: 'date', sortDir: filter.sortBy === 'date' && filter.sortDir === 'desc' ? 'asc' : 'desc' })}">Receipt Date</a></th>
-          <th><a href="/receipts${qs({ sortBy: 'amount', sortDir: filter.sortBy === 'amount' && filter.sortDir === 'desc' ? 'asc' : 'desc' })}">Amount</a></th>
-          <th>Items</th>
+          <th><span class="col-source src-receipt">Receipt</span><a href="/receipts${qs({ sortBy: 'vendor', sortDir: filter.sortBy === 'vendor' && filter.sortDir === 'asc' ? 'desc' : 'asc' })}">Vendor</a></th>
+          <th><span class="col-source src-budget">Budget</span>Payee</th>
+          <th><span class="col-source src-receipt">Receipt</span><a href="/receipts${qs({ sortBy: 'date', sortDir: filter.sortBy === 'date' && filter.sortDir === 'desc' ? 'asc' : 'desc' })}">Date</a></th>
+          <th><span class="col-source src-budget">Budget</span>Tx Date</th>
+          <th><span class="col-source src-receipt">Receipt</span><a href="/receipts${qs({ sortBy: 'amount', sortDir: filter.sortBy === 'amount' && filter.sortDir === 'desc' ? 'asc' : 'desc' })}">Amount</a></th>
+          <th><span class="col-source src-budget">Budget</span>Amount</th>
+          <th><span class="col-source src-budget">Budget</span>Category</th>
+          <th><span class="col-source src-receipt">Receipt</span>Items</th>
           <th><a href="/receipts${qs({ sortBy: 'matchedAt', sortDir: filter.sortBy === 'matchedAt' && filter.sortDir === 'desc' ? 'asc' : 'desc' })}">Matched</a></th>
         </tr></thead>
         <tbody>
-          ${rows.map((r) => `<tr data-id="${r.id}" onclick="if(event.target.type!=='checkbox')location.href='/receipts/${r.id}'" style="cursor:pointer;">
+          ${rows.map((r) => `<tr data-id="${r.id}" data-tx-id="${r.transactionId}" onclick="if(event.target.type!=='checkbox')location.href='/receipts/${r.id}'" style="cursor:pointer;">
             <td><input type="checkbox" class="row-check" value="${r.id}" onchange="updateCount()"></td>
             <td><span class="badge ${r.status}">${r.status}</span></td>
             <td><span class="badge confidence-${r.matchConfidence}">${r.matchConfidence}</span></td>
             <td>${r.overridesExisting ? '<span title="Will replace existing category" style="color:#fbbf24;">&#9888;</span>' : ''}</td>
             <td>${esc(truncate(String(r.vendorName ?? ''), 30))}</td>
+            <td class="tx-payee"><span class="loading-dots">···</span></td>
             <td>${r.receiptDate ?? ''}</td>
+            <td class="tx-date"><span class="loading-dots">···</span></td>
             <td class="amount negative">${formatAmount(r.totalAmount as number)}</td>
+            <td class="tx-amount"><span class="loading-dots">···</span></td>
+            <td class="tx-category"><span class="loading-dots">···</span></td>
             <td>${r.lineItemCount ?? 0}</td>
             <td>${formatDate(String(r.matchedAt ?? ''))}</td>
           </tr>`).join('')}
-          ${rows.length === 0 ? '<tr><td colspan="9" style="text-align: center; padding: 2rem; color: #666;">No receipt matches found</td></tr>' : ''}
+          ${rows.length === 0 ? '<tr><td colspan="12" style="text-align: center; padding: 2rem; color: #666;">No receipt matches found</td></tr>' : ''}
         </tbody>
       </table>
     </div>
@@ -147,6 +158,36 @@ export function renderReceiptQueue(
           }
         } catch (err) { showToast('error', String(err)); }
       }
+      async function resetAndRematch() {
+        var msg = 'This will:\\n'
+          + '1. Unmatch ALL non-applied matches\\n'
+          + '2. Re-run matching with the current algorithm\\n\\n'
+          + 'Applied matches (with splits written to Actual Budget) will be PRESERVED.\\n\\n'
+          + 'Are you sure?';
+        if (!confirm(msg)) return;
+        if (!confirm('Final confirmation: Reset and rematch all receipts?')) return;
+        try {
+          showToast('info', 'Resetting and rematching... this may take a moment.');
+          var res = await fetch('/api/batch/reset-rematch', { method: 'POST', headers: { 'Content-Type': 'application/json' } });
+          var data = await res.json();
+          if (res.ok) {
+            var summary = 'Reset: ' + data.reset + ' unmatched'
+              + (data.preserved > 0 ? ', ' + data.preserved + ' preserved (applied)' : '')
+              + '\\nRematched: ' + data.rematchSummary.matched
+              + ' (' + data.rematchSummary.exact + ' exact, '
+              + data.rematchSummary.probable + ' probable, '
+              + data.rematchSummary.possible + ' possible)'
+              + ', ' + data.rematchSummary.unmatched + ' unmatched';
+            if (data.resetErrors && data.resetErrors.length > 0) {
+              summary += '\\n' + data.resetErrors.length + ' errors during reset';
+            }
+            showToast('success', summary);
+            setTimeout(function() { location.reload(); }, 2000);
+          } else {
+            showToast('error', data.error || 'Reset & rematch failed');
+          }
+        } catch (err) { showToast('error', String(err)); }
+      }
       function showToast(type, msg) {
         const t = document.getElementById('toast');
         t.className = 'toast ' + type;
@@ -154,6 +195,71 @@ export function renderReceiptQueue(
         t.style.display = 'block';
         setTimeout(() => { t.style.display = 'none'; }, 3000);
       }
+
+      // Lazy-load transaction details from Actual Budget
+      (async function() {
+        var rows = document.querySelectorAll('tr[data-tx-id]');
+        if (rows.length === 0) return;
+        var ids = [...new Set([...rows].map(function(r) { return r.dataset.txId; }))];
+        function clearDots(row) {
+          row.querySelectorAll('.loading-dots').forEach(function(d) { d.textContent = '\\u2014'; d.className = ''; d.style.color = '#555'; });
+        }
+        try {
+          var res = await fetch('/api/transactions/bulk-details', {
+            method: 'POST', headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ transactionIds: ids })
+          });
+          if (!res.ok) { rows.forEach(clearDots); return; }
+          var data = await res.json();
+          rows.forEach(function(row) {
+            var info = data[row.dataset.txId];
+            if (!info) { clearDots(row); return; }
+            var payeeCell = row.querySelector('.tx-payee');
+            var dateCell = row.querySelector('.tx-date');
+            var amtCell = row.querySelector('.tx-amount');
+            var catCell = row.querySelector('.tx-category');
+            if (amtCell) {
+              if (info.amount != null) {
+                var dollars = (Math.abs(info.amount) / 100).toFixed(2);
+                amtCell.textContent = (info.amount < 0 ? '-' : '') + '$' + dollars;
+                amtCell.style.color = info.amount < 0 ? '#f87171' : '#4ade80';
+                amtCell.style.fontSize = '0.85rem';
+              } else {
+                amtCell.textContent = '\u2014';
+                amtCell.style.color = '#555';
+              }
+            }
+            if (payeeCell) {
+              payeeCell.textContent = info.payeeName || info.importedPayee || '';
+              payeeCell.style.color = '#ccc';
+              payeeCell.style.fontSize = '0.85rem';
+            }
+            if (dateCell) {
+              dateCell.textContent = info.date || '';
+              dateCell.style.color = '#ccc';
+              dateCell.style.fontSize = '0.85rem';
+            }
+            if (catCell) {
+              catCell.style.fontSize = '0.85rem';
+              if (info.isParent && info.subtransactions && info.subtransactions.length > 0) {
+                var cats = info.subtransactions.map(function(s) { return s.categoryName || '?'; });
+                var unique = [...new Set(cats)];
+                catCell.innerHTML = '<span style="color:#60a5fa;">Split:</span> ' + unique.join(', ');
+                catCell.style.color = '#ccc';
+              } else if (info.categoryName) {
+                catCell.textContent = info.categoryName;
+                catCell.style.color = '#fbbf24';
+              } else {
+                catCell.textContent = '(none)';
+                catCell.style.color = '#666';
+              }
+            }
+          });
+        } catch (e) {
+          console.error('Failed to load transaction details', e);
+          rows.forEach(clearDots);
+        }
+      })();
     </script>
   `;
   return receiptLayout('Receipt Queue', content, 'queue');
@@ -220,15 +326,19 @@ export function renderReceiptDetail(
               <th>Actions</th>
             </tr></thead>
             <tbody>
-              ${classifications.map((c) => `<tr data-item-id="${c.id}">
+              ${classifications.map((c) => `<tr data-item-id="${c.id}" data-match-id="${c.receiptMatchId}">
                 <td>${(c.lineItemIndex as number) + 1}</td>
                 <td title="${esc(String(c.description ?? ''))}">${esc(truncate(String(c.description ?? ''), 25))}</td>
                 <td>${c.quantity ?? 1}</td>
-                <td class="amount">${formatAmount(c.totalPrice as number, true)}</td>
-                <td class="amount">${formatAmount(c.allocatedTax as number, true)}</td>
-                <td class="amount">${formatAmount(c.amountWithTax as number)}</td>
-                <td><span title="${esc(String(c.classificationType ?? ''))}">${esc(String(c.suggestedCategoryName ?? '-'))}</span>
-                  ${c.confidence ? `<span class="badge confidence-${c.confidence}" style="margin-left:0.3rem;font-size:0.65rem;">${c.confidence}</span>` : ''}</td>
+                <td class="amount" data-field="totalPrice">${formatAmount(c.totalPrice as number, true)}</td>
+                <td class="amount" data-field="allocatedTax">${formatAmount(c.allocatedTax as number, true)}</td>
+                <td class="amount" data-field="amountWithTax">${formatAmount(c.amountWithTax as number)}</td>
+                <td class="category-cell">
+                  <span class="cat-label" data-item-id="${c.id}" data-category-id="${esc(String(c.suggestedCategoryId ?? ''))}" onclick="showCategoryDropdown(this)" title="Click to change category&#10;Type: ${esc(String(c.classificationType ?? ''))}" style="cursor:pointer;border-bottom:1px dashed #666;">${esc(String(c.suggestedCategoryName ?? '-'))}</span>
+                  <select class="cat-select" data-item-id="${c.id}" style="display:none;background:#1b1d2a;color:#e0e0e0;border:1px solid #8b7cf6;border-radius:4px;font-size:0.8rem;max-width:160px;" onchange="onCategoryChange(this)" onblur="hideCategoryDropdown(this)"></select>
+                  ${c.confidence ? `<span class="badge confidence-${c.confidence}" style="margin-left:0.3rem;font-size:0.65rem;">${c.confidence}</span>` : ''}
+                  ${c.taxable === 0 ? '<span title="Tax exempt" style="margin-left:0.2rem;font-size:0.7rem;color:#34d399;">&#9679;</span>' : ''}
+                </td>
                 <td><span class="badge ${c.status}">${c.status}</span></td>
                 <td>
                   ${c.status !== 'approved' ? `<button class="btn btn-approve" onclick="setItemStatus('${c.id}','approved')">&#10003;</button>` : ''}
@@ -265,8 +375,13 @@ export function renderReceiptDetail(
           <h2>Matched Transaction</h2>
           <div class="detail-grid">
             <div class="detail-row"><span class="detail-label">Transaction ID</span><span style="font-family:monospace;font-size:0.8rem;">${truncate(String(match.transactionId ?? ''), 20)}</span></div>
+            <div class="detail-row"><span class="detail-label">Payee</span><span id="txPayee" style="color:#888;font-size:0.85rem;">loading...</span></div>
+            <div class="detail-row"><span class="detail-label">Transaction Date</span><span id="txDate" style="color:#888;font-size:0.85rem;">loading...</span></div>
+            <div class="detail-row"><span class="detail-label">Account</span><span id="txAccount" style="color:#888;font-size:0.85rem;">loading...</span></div>
+            <div class="detail-row"><span class="detail-label">Transaction Amount</span><span id="txAmount" style="color:#888;font-size:0.85rem;">loading...</span></div>
             <div class="detail-row"><span class="detail-label">Match Confidence</span><span class="badge confidence-${match.matchConfidence}">${match.matchConfidence}</span></div>
             <div class="detail-row"><span class="detail-label">Matched At</span><span>${formatDate(String(match.matchedAt ?? ''))}</span></div>
+            <div class="detail-row"><span class="detail-label">Current Category</span><span id="txCategoryInfo" style="color:#888;font-size:0.8rem;">loading...</span></div>
           </div>
           ${match.overridesExisting ? `
           <div style="margin-top: 0.8rem; padding: 0.6rem; background: #78350f22; border: 1px solid #78350f; border-radius: 4px; font-size: 0.85rem;">
@@ -278,17 +393,17 @@ export function renderReceiptDetail(
         ${allClassified ? `
         <div class="card">
           <h2>Split Preview</h2>
-          <table style="margin-top: 0.5rem;">
+          <table id="splitPreview" style="margin-top: 0.5rem;">
             <thead><tr><th>Category</th><th>Amount</th><th>Status</th></tr></thead>
             <tbody>
-              ${classifications.map((c) => `<tr>
-                <td>${esc(String(c.suggestedCategoryName ?? 'Uncategorized'))}</td>
-                <td class="amount">${formatAmount(c.amountWithTax as number)}</td>
+              ${classifications.map((c) => `<tr data-split-id="${c.id}">
+                <td data-field="splitCategory">${esc(String(c.suggestedCategoryName ?? 'Uncategorized'))}</td>
+                <td class="amount" data-field="splitAmount">${formatAmount(c.amountWithTax as number)}</td>
                 <td><span class="badge ${c.status}">${c.status}</span></td>
               </tr>`).join('')}
               <tr style="border-top: 2px solid #3a3d52; font-weight: 700;">
                 <td>Total</td>
-                <td class="amount">${formatAmount(classifications.reduce((s, c) => s + (c.amountWithTax as number ?? 0), 0))}</td>
+                <td class="amount" id="splitTotal">${formatAmount(classifications.reduce((s, c) => s + (c.amountWithTax as number ?? 0), 0))}</td>
                 <td></td>
               </tr>
             </tbody>
@@ -331,6 +446,203 @@ export function renderReceiptDetail(
       const matchId = '${match.id}';
       const receiptId = '${receipt.id}';
 
+      // Category cache (loaded once)
+      let categoryCache = null;
+      async function loadCategories() {
+        if (categoryCache) return categoryCache;
+        try {
+          const res = await fetch('/api/categories');
+          if (res.ok) categoryCache = await res.json();
+        } catch (e) { console.error('Failed to load categories', e); }
+        return categoryCache || [];
+      }
+
+      // Fetch current transaction details from Actual Budget (live lookup)
+      (async function() {
+        const el = document.getElementById('txCategoryInfo');
+        const payeeEl = document.getElementById('txPayee');
+        const dateEl = document.getElementById('txDate');
+        const accountEl = document.getElementById('txAccount');
+        const amountEl = document.getElementById('txAmount');
+        try {
+          const txId = '${esc(String(match.transactionId ?? ''))}';
+          const res = await fetch('/api/transactions/' + txId + '/details');
+          if (!res.ok) {
+            if (el) el.textContent = '(unavailable)';
+            if (payeeEl) payeeEl.textContent = '(unavailable)';
+            if (dateEl) dateEl.textContent = '(unavailable)';
+            if (accountEl) accountEl.textContent = '(unavailable)';
+            if (amountEl) amountEl.textContent = '(unavailable)';
+            return;
+          }
+          const data = await res.json();
+          // Populate payee, date, account
+          if (payeeEl) {
+            payeeEl.textContent = data.payeeName || data.importedPayee || '(unknown)';
+            payeeEl.style.color = '#ccc';
+          }
+          if (dateEl) {
+            dateEl.textContent = data.date || '(unknown)';
+            dateEl.style.color = '#ccc';
+          }
+          if (accountEl) {
+            accountEl.textContent = data.accountName || '(unknown)';
+            accountEl.style.color = '#ccc';
+          }
+          if (amountEl) {
+            if (data.amount != null) {
+              var dollars = (Math.abs(data.amount) / 100).toFixed(2);
+              amountEl.textContent = (data.amount < 0 ? '-' : '') + '$' + dollars;
+              amountEl.style.color = data.amount < 0 ? '#f87171' : '#4ade80';
+            } else {
+              amountEl.textContent = '(unknown)';
+            }
+          }
+          // Populate category
+          if (el) {
+            if (data.isParent && data.subtransactions && data.subtransactions.length > 0) {
+              var parts = data.subtransactions.map(function(s) {
+                var amt = Math.abs(s.amount) / 100;
+                return (s.categoryName || 'Uncategorized') + ' ($' + amt.toFixed(2) + ')';
+              });
+              el.innerHTML = '<span style="color:#60a5fa;">Split:</span> ' + parts.join(', ');
+            } else if (data.categoryName) {
+              el.textContent = data.categoryName;
+              el.style.color = '#fbbf24';
+            } else {
+              el.textContent = '(uncategorized)';
+            }
+          }
+        } catch (e) {
+          if (el) el.textContent = '(error)';
+          if (payeeEl) payeeEl.textContent = '(error)';
+        }
+      })();
+
+      // --- Category dropdown ---
+      async function showCategoryDropdown(label) {
+        const itemId = label.dataset.itemId;
+        const select = label.parentElement.querySelector('.cat-select');
+        const cats = await loadCategories();
+        if (select.options.length <= 1) {
+          select.innerHTML = '';
+          const groups = {};
+          cats.forEach(c => {
+            const g = c.group || 'Other';
+            if (!groups[g]) groups[g] = [];
+            groups[g].push(c);
+          });
+          Object.keys(groups).sort().forEach(g => {
+            const og = document.createElement('optgroup');
+            og.label = g;
+            groups[g].forEach(c => {
+              const opt = document.createElement('option');
+              opt.value = c.id;
+              opt.textContent = c.name;
+              opt.dataset.name = c.name;
+              if (c.id === label.dataset.categoryId) opt.selected = true;
+              og.appendChild(opt);
+            });
+            select.appendChild(og);
+          });
+        }
+        label.style.display = 'none';
+        select.style.display = 'inline-block';
+        select.focus();
+      }
+
+      function hideCategoryDropdown(select) {
+        setTimeout(() => {
+          if (document.activeElement === select) return;
+          select.style.display = 'none';
+          select.parentElement.querySelector('.cat-label').style.display = '';
+        }, 150);
+      }
+
+      async function onCategoryChange(select) {
+        const itemId = select.dataset.itemId;
+        const option = select.options[select.selectedIndex];
+        const categoryId = option.value;
+        const categoryName = option.dataset.name || option.textContent;
+
+        try {
+          const res = await fetch('/api/line-items/' + itemId, {
+            method: 'PATCH', headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ categoryId, categoryName })
+          });
+          if (res.ok) {
+            const data = await res.json();
+            if (data.classifications) updateAllRows(data.classifications);
+            showToast('success', 'Category updated');
+          } else {
+            const d = await res.json();
+            showToast('error', d.error || 'Failed to update');
+          }
+        } catch (err) { showToast('error', String(err)); }
+
+        select.style.display = 'none';
+        select.parentElement.querySelector('.cat-label').style.display = '';
+      }
+
+      // --- Live row updates ---
+      function fmtAmount(cents, dashIfZero) {
+        if (cents == null) return '';
+        if (dashIfZero && cents === 0) return '\\u2014';
+        const val = Math.abs(cents) / 100;
+        return (cents < 0 ? '-' : '') + '$' + val.toFixed(2);
+      }
+
+      function updateAllRows(classifications) {
+        let splitTotal = 0;
+        classifications.forEach(c => {
+          const row = document.querySelector('tr[data-item-id="' + c.id + '"]');
+          if (row) {
+            const taxCell = row.querySelector('[data-field="allocatedTax"]');
+            const totalCell = row.querySelector('[data-field="amountWithTax"]');
+            if (taxCell) taxCell.textContent = fmtAmount(c.allocatedTax, true);
+            if (totalCell) totalCell.textContent = fmtAmount(c.amountWithTax);
+
+            // Update category label
+            const label = row.querySelector('.cat-label');
+            if (label) {
+              label.textContent = c.suggestedCategoryName || '-';
+              label.dataset.categoryId = c.suggestedCategoryId || '';
+            }
+            // Update tax-exempt indicator
+            const existingDot = row.querySelector('.category-cell span[title="Tax exempt"]');
+            if (existingDot) existingDot.remove();
+            if (c.taxable === 0) {
+              const dot = document.createElement('span');
+              dot.title = 'Tax exempt';
+              dot.style.cssText = 'margin-left:0.2rem;font-size:0.7rem;color:#34d399;';
+              dot.innerHTML = '&#9679;';
+              row.querySelector('.category-cell').appendChild(dot);
+            }
+
+            // Update status badge
+            const statusBadge = row.querySelector('td:nth-last-child(2) .badge');
+            if (statusBadge && c.status) {
+              statusBadge.className = 'badge ' + c.status;
+              statusBadge.textContent = c.status;
+            }
+          }
+
+          // Update split preview
+          const splitRow = document.querySelector('tr[data-split-id="' + c.id + '"]');
+          if (splitRow) {
+            const catCell = splitRow.querySelector('[data-field="splitCategory"]');
+            const amtCell = splitRow.querySelector('[data-field="splitAmount"]');
+            if (catCell) catCell.textContent = c.suggestedCategoryName || 'Uncategorized';
+            if (amtCell) amtCell.textContent = fmtAmount(c.amountWithTax);
+          }
+          splitTotal += (c.amountWithTax || 0);
+        });
+
+        const totalEl = document.getElementById('splitTotal');
+        if (totalEl) totalEl.textContent = fmtAmount(splitTotal);
+      }
+
+      // --- Existing actions ---
       async function classifyReceipt() {
         showToast('success', 'Classification started...');
         try {
@@ -361,8 +673,8 @@ export function renderReceiptDetail(
             body: JSON.stringify({ status })
           });
           if (res.ok) {
-            const badge = document.querySelector('tr[data-item-id="' + itemId + '"] .badge.pending, tr[data-item-id="' + itemId + '"] .badge.approved, tr[data-item-id="' + itemId + '"] .badge.rejected');
-            if (badge) { badge.className = 'badge ' + status; badge.textContent = status; }
+            const data = await res.json();
+            if (data.classifications) updateAllRows(data.classifications);
             showToast('success', status === 'approved' ? 'Approved' : 'Rejected');
             nudgeApplyButton();
           }
@@ -372,7 +684,7 @@ export function renderReceiptDetail(
       function nudgeApplyButton() {
         const btn = document.getElementById('applyBtn');
         if (!btn) return;
-        const badges = document.querySelectorAll('tr[data-item-id] .badge.pending, tr[data-item-id] .badge.approved, tr[data-item-id] .badge.rejected');
+        const badges = document.querySelectorAll('tr[data-item-id] td:nth-last-child(2) .badge');
         const allApproved = [...badges].every(b => b.classList.contains('approved'));
         if (allApproved) { btn.disabled = false; btn.removeAttribute('title'); }
         btn.classList.remove('btn-attention');
@@ -386,7 +698,13 @@ export function renderReceiptDetail(
             method: 'POST', headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ matchIds: [matchId] })
           });
-          if (res.ok) { showToast('success', 'All items approved'); setTimeout(() => location.reload(), 800); }
+          if (res.ok) {
+            showToast('success', 'All items approved');
+            document.querySelectorAll('tr[data-item-id] td:nth-last-child(2) .badge').forEach(function(b) {
+              b.className = 'badge approved'; b.textContent = 'approved';
+            });
+            nudgeApplyButton();
+          }
           else { const d = await res.json(); showToast('error', d.error); }
         } catch (err) { showToast('error', String(err)); }
       }
@@ -398,7 +716,12 @@ export function renderReceiptDetail(
             method: 'POST', headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ matchIds: [matchId] })
           });
-          if (res.ok) { showToast('success', 'All items rejected'); setTimeout(() => location.reload(), 800); }
+          if (res.ok) {
+            showToast('success', 'All items rejected');
+            document.querySelectorAll('tr[data-item-id] td:nth-last-child(2) .badge').forEach(function(b) {
+              b.className = 'badge rejected'; b.textContent = 'rejected';
+            });
+          }
           else { const d = await res.json(); showToast('error', d.error); }
         } catch (err) { showToast('error', String(err)); }
       }
@@ -438,6 +761,16 @@ export function renderReceiptDetail(
         t.style.display = 'block';
         setTimeout(() => { t.style.display = 'none'; }, 3000);
       }
+
+      // Auto-pulse Apply button on page load if all items already approved
+      (function() {
+        const btn = document.getElementById('applyBtn');
+        if (!btn || btn.disabled) return;
+        const badges = document.querySelectorAll('tr[data-item-id] td:nth-last-child(2) .badge');
+        if (badges.length > 0 && [...badges].every(b => b.classList.contains('approved'))) {
+          btn.classList.add('btn-attention');
+        }
+      })();
     </script>
   `;
   return receiptLayout(`${receipt.vendorName ?? 'Receipt'} - Detail`, content, 'queue');
@@ -661,9 +994,16 @@ function receiptLayout(title: string, content: string, activeNav: string): strin
       100% { box-shadow: 0 0 0 0 rgba(96, 165, 250, 0); }
     }
     .btn-attention {
-      animation: btn-pulse 1.5s ease-in-out 2;
+      animation: btn-pulse 1.5s ease-in-out infinite;
       border: 1px solid #60a5fa;
     }
+
+    @keyframes loading-fade { 0%,100% { opacity: 0.3; } 50% { opacity: 0.8; } }
+    .loading-dots { color: #555; font-size: 0.8rem; letter-spacing: 2px; animation: loading-fade 1.5s ease-in-out infinite; }
+
+    .col-source { display: block; font-size: 0.55rem; font-weight: 400; letter-spacing: 0.08em; text-transform: uppercase; line-height: 1; margin-bottom: 2px; }
+    .col-source.src-receipt { color: #8b7cf6; }
+    .col-source.src-budget { color: #60a5fa; }
   </style>
 </head>
 <body>
@@ -677,12 +1017,37 @@ function receiptLayout(title: string, content: string, activeNav: string): strin
     <a href="/receipts" class="${activeNav === 'queue' ? 'active' : ''}">Queue</a>
     <a href="/receipts/unmatched" class="${activeNav === 'unmatched' ? 'active' : ''}">Unmatched</a>
     <span class="spacer"></span>
+    <span id="cronToggle" title="Click to toggle cron job" style="cursor:pointer;font-size:0.8rem;color:#888;padding:0.2rem 0.5rem;border:1px solid #3a3d52;border-radius:4px;user-select:none;">Cron: ...</span>
     <a href="/logout" class="logout">Logout</a>
   </nav>
   <div class="container">
     ${content}
   </div>
   <div class="toast" id="toast"></div>
+  <script>
+  (function() {
+    var el = document.getElementById('cronToggle');
+    if (!el) return;
+    function update(enabled) {
+      el.textContent = 'Cron: ' + (enabled ? 'ON' : 'OFF');
+      el.style.color = enabled ? '#4ade80' : '#f87171';
+      el.style.borderColor = enabled ? '#166534' : '#7f1d1d';
+      el.title = 'Click to ' + (enabled ? 'pause' : 'resume') + ' the cron job';
+    }
+    fetch('/api/cron/status').then(function(r) { return r.json(); }).then(function(d) {
+      update(d.enabled);
+    }).catch(function() { el.textContent = 'Cron: ?'; });
+    el.addEventListener('click', function() {
+      var current = el.textContent.indexOf('ON') !== -1;
+      fetch('/api/cron/toggle', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ enabled: !current })
+      }).then(function(r) { return r.json(); }).then(function(d) {
+        update(d.enabled);
+      }).catch(function() { el.textContent = 'Cron: error'; });
+    });
+  })();
+  </script>
 </body>
 </html>`;
 }

@@ -218,6 +218,37 @@ class BatchService {
   }
 
   /**
+   * Reset all non-applied matches and return stats for the caller to trigger rematch.
+   * Applied matches with a preSplitSnapshot are preserved (they modified Actual Budget
+   * and require explicit rollback). Applied matches without snapshot (kept) are reset.
+   */
+  resetForRematch(): {
+    reset: number;
+    preserved: number;
+    errors: Array<{ matchId: string; error: string }>;
+  } {
+    const resettable = this.store.getAllResettableMatches();
+    const preserved = this.store.getAppliedWithSnapshotCount();
+    const errors: Array<{ matchId: string; error: string }> = [];
+    let reset = 0;
+
+    for (const match of resettable) {
+      try {
+        this.matchingService.unmatch(match.id as string);
+        reset++;
+      } catch (err) {
+        errors.push({
+          matchId: match.id as string,
+          error: err instanceof Error ? err.message : String(err),
+        });
+      }
+    }
+
+    console.log(`Reset for rematch: ${reset} reset, ${preserved} preserved (applied with snapshot), ${errors.length} errors`);
+    return { reset, preserved, errors };
+  }
+
+  /**
    * Re-classify already-classified matches.
    * Delegates to batchClassify — the classifier now supports re-classification
    * on 'classified' and 'rejected' matches.

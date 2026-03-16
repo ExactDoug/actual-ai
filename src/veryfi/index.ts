@@ -1,8 +1,9 @@
-export { authenticate } from './auth';
+export { authenticate, switchProfile } from './auth';
 export { VeryfiClient, VeryfiError, VeryfiSessionExpired, VeryfiAPIError, VeryfiRateLimited } from './client';
 export type {
   VeryfiConfig,
   VeryfiCredentials,
+  VeryfiProfile,
   VeryfiReceipt,
   VeryfiReceiptFilters,
   VeryfiLineItem,

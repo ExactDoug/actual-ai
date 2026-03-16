@@ -123,6 +123,7 @@ async function runClassification() {
           payee: t.payee ? payeeMap.get(t.payee) : undefined,
           imported_payee: t.imported_payee ?? undefined,
           hasCategory: !!t.category,
+          categoryId: t.category ?? undefined,
         })));
       } finally {
         await tempApi.shutdown();
@@ -143,8 +144,12 @@ if (!isFeatureEnabled('classifyOnStartup') && !cron.validate(cronSchedule)) {
   }
 }
 
+let cronTask: ReturnType<typeof cron.schedule> | null = null;
+let cronEnabled = true;
+
 if (cron.validate(cronSchedule)) {
-  cron.schedule(cronSchedule, async () => {
+  cronTask = cron.schedule(cronSchedule, async () => {
+    if (!cronEnabled) return;
     await runClassification();
   });
 }
@@ -226,6 +231,22 @@ if (REVIEW_UI_ENABLED) {
     receiptStore: isFeatureEnabled('receiptMatching') ? receiptStore : undefined,
     connectorRegistry: isFeatureEnabled('receiptMatching') ? connectorRegistry : undefined,
 
+    getVeryfiProfiles: isFeatureEnabled('receiptMatching') && connectorRegistry.get('veryfi')
+      ? async () => {
+        const adapter = connectorRegistry.get('veryfi') as import('./src/receipt/veryfi-adapter').default;
+        const client = await adapter.getClient();
+        const profiles = await client.getProfiles();
+        return profiles.map((p) => ({
+          username: p.username,
+          companyName: p.companyName,
+          accountId: p.accountId,
+          isPrimary: p.isPrimary,
+          type: p.type,
+          displayType: p.displayType,
+        }));
+      }
+      : undefined,
+
     onReceiptFetch: isFeatureEnabled('receiptMatching')
       ? () => receiptFetchService.fetchAll()
       : undefined,
@@ -242,7 +263,14 @@ if (REVIEW_UI_ENABLED) {
       : undefined,
 
     onReceiptApplySplit: isFeatureEnabled('receiptMatching')
-      ? (matchId: string) => splitTransactionService.applySplit(matchId)
+      ? async (matchId: string) => {
+        const apiService = await createTempApiService();
+        try {
+          await splitTransactionService.applySplit(matchId);
+        } finally {
+          await apiService.shutdown();
+        }
+      }
       : undefined,
 
     onReceiptUnmatch: isFeatureEnabled('receiptMatching')
@@ -254,7 +282,14 @@ if (REVIEW_UI_ENABLED) {
       : undefined,
 
     onReceiptRollback: isFeatureEnabled('receiptMatching')
-      ? (matchId: string) => splitTransactionService.rollbackSplit(matchId)
+      ? async (matchId: string) => {
+        const apiService = await createTempApiService();
+        try {
+          await splitTransactionService.rollbackSplit(matchId);
+        } finally {
+          await apiService.shutdown();
+        }
+      }
       : undefined,
 
     onBatchClassify: isFeatureEnabled('lineItemClassification')
@@ -284,6 +319,44 @@ if (REVIEW_UI_ENABLED) {
       ? (request) => batchService.batchReject(request)
       : undefined,
 
+    onResetAndRematch: isFeatureEnabled('receiptMatching')
+      ? async () => {
+        // Step 1: Reset all non-applied matches
+        const { reset, preserved, errors: resetErrors } = batchService.resetForRematch();
+
+        // Step 2: Fetch fresh transactions and re-run matching
+        const tempApi = await createTempApiService();
+        try {
+          const accounts = await tempApi.getAccounts();
+          let transactions: TransactionEntity[] = [];
+          for (const account of accounts) {
+            transactions = transactions.concat(
+              await tempApi.getTransactions(account.id, '1990-01-01', '2030-01-01'),
+            );
+          }
+          const payees = await tempApi.getPayees();
+          const payeeMap = new Map<string, string>();
+          for (const p of payees) {
+            if (p.id && p.name) payeeMap.set(p.id, p.name);
+          }
+          const matchable = transactions.filter((t) => !t.is_parent && t.amount !== 0);
+          const rematchSummary = matchingService.matchAll(matchable.map((t) => ({
+            id: t.id,
+            amount: t.amount,
+            date: t.date,
+            payee: t.payee ? payeeMap.get(t.payee) : undefined,
+            imported_payee: t.imported_payee ?? undefined,
+            hasCategory: !!t.category,
+            categoryId: t.category ?? undefined,
+          })));
+
+          return { reset, preserved, resetErrors, rematchSummary };
+        } finally {
+          await tempApi.shutdown();
+        }
+      }
+      : undefined,
+
     onBatchReclassify: isFeatureEnabled('lineItemClassification')
       ? async (request) => {
         const { flatCats, groupsForPrompt, ruleDescriptions, shutdown } = await fetchClassificationContext();
@@ -295,6 +368,181 @@ if (REVIEW_UI_ENABLED) {
       }
       : undefined,
 
+    async getTransactionDetails(transactionId: string) {
+      const apiService = await createTempApiService();
+      try {
+        const accounts = await apiService.getAccounts();
+        const accountMap = new Map<string, string>();
+        let allTransactions: TransactionEntity[] = [];
+        for (const account of accounts) {
+          if (account.id && account.name) accountMap.set(account.id, account.name);
+          allTransactions = allTransactions.concat(
+            await apiService.getTransactions(account.id, '1990-01-01', '2030-01-01'),
+          );
+        }
+        const tx = allTransactions.find((t) => t.id === transactionId);
+        if (!tx) return null;
+
+        // Build payee and category lookups
+        const payees = await apiService.getPayees();
+        const payeeMap = new Map<string, string>();
+        for (const p of payees) {
+          if (p.id && p.name) payeeMap.set(p.id, p.name);
+        }
+        const groups = await apiService.getCategoryGroups();
+        const catMap = new Map<string, string>();
+        for (const group of groups) {
+          if ('categories' in group && Array.isArray(group.categories)) {
+            for (const cat of group.categories as { id: string; name: string }[]) {
+              catMap.set(cat.id, cat.name);
+            }
+          }
+        }
+
+        const dateStr = String(tx.date ?? '');
+        const formattedDate = /^\d{8}$/.test(dateStr)
+          ? `${dateStr.slice(0, 4)}-${dateStr.slice(4, 6)}-${dateStr.slice(6, 8)}`
+          : dateStr;
+
+        const result: {
+          amount?: number;
+          date?: string;
+          payeeName?: string;
+          importedPayee?: string;
+          accountName?: string;
+          categoryId?: string;
+          categoryName?: string;
+          isParent?: boolean;
+          subtransactions?: { amount: number; categoryId?: string; categoryName?: string }[];
+        } = {
+          amount: tx.amount,
+          date: formattedDate,
+          payeeName: tx.payee ? payeeMap.get(tx.payee) ?? '' : '',
+          importedPayee: tx.imported_payee ?? '',
+          accountName: (tx as unknown as { account?: string }).account
+            ? accountMap.get((tx as unknown as { account: string }).account) ?? ''
+            : '',
+        };
+
+        if (tx.is_parent) {
+          result.isParent = true;
+          const subs = allTransactions.filter((t) => t.parent_id === tx.id);
+          result.subtransactions = subs.map((s) => ({
+            amount: s.amount,
+            categoryId: s.category ?? undefined,
+            categoryName: s.category ? catMap.get(s.category) : undefined,
+          }));
+        } else if (tx.category) {
+          result.categoryId = tx.category;
+          result.categoryName = catMap.get(tx.category);
+        }
+
+        return result;
+      } finally {
+        await apiService.shutdown();
+      }
+    },
+
+    async getTransactionsBulk(transactionIds: string[]) {
+      const apiService = await createTempApiService();
+      try {
+        const accounts = await apiService.getAccounts();
+        const accountMap = new Map<string, string>();
+        let allTransactions: TransactionEntity[] = [];
+        for (const account of accounts) {
+          if (account.id && account.name) accountMap.set(account.id, account.name);
+          allTransactions = allTransactions.concat(
+            await apiService.getTransactions(account.id, '1990-01-01', '2030-01-01'),
+          );
+        }
+
+        const payees = await apiService.getPayees();
+        const payeeMap = new Map<string, string>();
+        for (const p of payees) {
+          if (p.id && p.name) payeeMap.set(p.id, p.name);
+        }
+        const groups = await apiService.getCategoryGroups();
+        const catMap = new Map<string, string>();
+        for (const group of groups) {
+          if ('categories' in group && Array.isArray(group.categories)) {
+            for (const cat of group.categories as { id: string; name: string }[]) {
+              catMap.set(cat.id, cat.name);
+            }
+          }
+        }
+
+        // Build account lookup from transactions (account field is the account ID)
+        const txAccountMap = new Map<string, string>();
+        for (const tx of allTransactions) {
+          const acctId = (tx as unknown as { account?: string }).account;
+          if (acctId) txAccountMap.set(tx.id, acctId);
+        }
+
+        const requestedSet = new Set(transactionIds);
+        const result: Record<string, {
+          amount?: number;
+          date?: string;
+          payeeName?: string;
+          importedPayee?: string;
+          accountName?: string;
+          categoryId?: string;
+          categoryName?: string;
+          isParent?: boolean;
+          subtransactions?: { amount: number; categoryId?: string; categoryName?: string }[];
+        }> = {};
+
+        for (const tx of allTransactions) {
+          if (!requestedSet.has(tx.id)) continue;
+
+          const dateStr = String(tx.date ?? '');
+          const formattedDate = /^\d{8}$/.test(dateStr)
+            ? `${dateStr.slice(0, 4)}-${dateStr.slice(4, 6)}-${dateStr.slice(6, 8)}`
+            : dateStr;
+
+          const acctId = txAccountMap.get(tx.id);
+          const entry: typeof result[string] = {
+            amount: tx.amount,
+            date: formattedDate,
+            payeeName: tx.payee ? payeeMap.get(tx.payee) ?? '' : '',
+            importedPayee: tx.imported_payee ?? '',
+            accountName: acctId ? accountMap.get(acctId) ?? '' : '',
+          };
+
+          if (tx.is_parent) {
+            entry.isParent = true;
+            const subs = allTransactions.filter((t) => t.parent_id === tx.id);
+            entry.subtransactions = subs.map((s) => ({
+              amount: s.amount,
+              categoryId: s.category ?? undefined,
+              categoryName: s.category ? catMap.get(s.category) : undefined,
+            }));
+          } else if (tx.category) {
+            entry.categoryId = tx.category;
+            entry.categoryName = catMap.get(tx.category);
+          }
+
+          result[tx.id] = entry;
+        }
+
+        return result;
+      } finally {
+        await apiService.shutdown();
+      }
+    },
+
+    getCronStatus() {
+      return {
+        enabled: cronEnabled,
+        schedule: cronSchedule,
+        lastRunId: currentRunId ?? undefined,
+      };
+    },
+
+    setCronEnabled(enabled: boolean) {
+      cronEnabled = enabled;
+      return cronEnabled;
+    },
+
     getConfig() {
       return {
         llmProvider,
@@ -303,6 +551,7 @@ if (REVIEW_UI_ENABLED) {
         serverURL,
         budgetId,
         cronSchedule,
+        cronEnabled,
         dryRun: isFeatureEnabled('dryRun'),
         features: {
           classifyOnStartup: isFeatureEnabled('classifyOnStartup'),

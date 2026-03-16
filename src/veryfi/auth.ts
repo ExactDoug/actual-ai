@@ -139,6 +139,47 @@ function humanDelay(lowMs = 500, highMs = 2000): Promise<void> {
 
 // ── Main auth flow ──────────────────────────────────────────────────
 
+/**
+ * Switch to a different Veryfi profile.
+ * Makes a GET request to the web app profile-switch URL, which returns
+ * a dashboard page with new credentials embedded in JavaScript.
+ *
+ * Requires cookies from a prior authenticate() call.
+ */
+export async function switchProfile(
+  cookies: string,
+  username: string,
+  apiKey: string,
+): Promise<{ clientId: string; veryfiSession: string }> {
+  await humanDelay(500, 1500);
+  const url = `${APP_URL}/me/profile/switch/${username}/${apiKey}/`;
+  const resp = await fetch(url, {
+    headers: {
+      'user-agent': USER_AGENT,
+      'cookie': cookies,
+    },
+    redirect: 'follow',
+  });
+  if (!resp.ok) {
+    throw new Error(`Profile switch failed: HTTP ${resp.status}`);
+  }
+  const html = await resp.text();
+
+  const cidMatch = html.match(/IQBOXY\.API_CLIENT_ID='([^']+)'/);
+  const sessMatch = html.match(/IQBOXY\.API\.init\("[^"]+","([^"]+)"\)/);
+
+  if (!cidMatch || !sessMatch) {
+    throw new Error(
+      `Could not extract API credentials after switching to profile '${username}'`,
+    );
+  }
+
+  return {
+    clientId: cidMatch[1],
+    veryfiSession: sessMatch[1],
+  };
+}
+
 export async function authenticate(
   username: string,
   password: string,
