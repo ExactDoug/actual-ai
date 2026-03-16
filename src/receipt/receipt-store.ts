@@ -96,6 +96,13 @@ class ReceiptStore {
         createdAt TEXT NOT NULL DEFAULT (datetime('now'))
       );
 
+      CREATE TABLE IF NOT EXISTS sync_state (
+        providerId TEXT PRIMARY KEY,
+        lastSyncTimestamp TEXT NOT NULL,
+        lastSyncReceiptCount INTEGER DEFAULT 0,
+        updatedAt TEXT NOT NULL DEFAULT (datetime('now'))
+      );
+
       INSERT OR IGNORE INTO tax_exempt_categories (namePrefix, reason) VALUES
         ('groceries', 'NM gross receipts tax exemption'),
         ('medical', 'NM gross receipts tax exemption'),
@@ -745,6 +752,28 @@ class ReceiptStore {
 
   // ---------------------------------------------------------------------------
   // Utility
+  // ---------------------------------------------------------------------------
+  // Sync state
+  // ---------------------------------------------------------------------------
+
+  getSyncState(providerId: string): { lastSyncTimestamp: string; lastSyncReceiptCount: number } | null {
+    const row = this.db.prepare(
+      'SELECT lastSyncTimestamp, lastSyncReceiptCount FROM sync_state WHERE providerId = ?',
+    ).get(providerId) as { lastSyncTimestamp: string; lastSyncReceiptCount: number } | undefined;
+    return row ?? null;
+  }
+
+  setSyncState(providerId: string, lastSyncTimestamp: string, lastSyncReceiptCount: number): void {
+    this.db.prepare(`
+      INSERT INTO sync_state (providerId, lastSyncTimestamp, lastSyncReceiptCount, updatedAt)
+      VALUES (?, ?, ?, datetime('now'))
+      ON CONFLICT(providerId) DO UPDATE SET
+        lastSyncTimestamp = excluded.lastSyncTimestamp,
+        lastSyncReceiptCount = excluded.lastSyncReceiptCount,
+        updatedAt = datetime('now')
+    `).run(providerId, lastSyncTimestamp, lastSyncReceiptCount);
+  }
+
   // ---------------------------------------------------------------------------
 
   close(): void {
