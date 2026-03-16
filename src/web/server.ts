@@ -5,6 +5,7 @@ import { authMiddleware, loginHandler, loginPage, COOKIE_NAME } from './auth';
 import { renderDashboard, renderClassifications, renderHistory } from './views/renderer';
 import ReceiptStore from '../receipt/receipt-store';
 import ConnectorRegistry from '../receipt/connector-registry';
+import { reconcileMatchTax } from '../receipt/tax-reconciler';
 import type { BatchRequest, BatchResponse } from '../receipt/batch-service';
 import {
   renderReceiptQueue, renderReceiptDetail, renderUnmatchedReceipts,
@@ -32,6 +33,26 @@ export interface WebServerDeps {
   onBatchUnmatch?: (request: BatchRequest) => BatchResponse;
   onBatchReject?: (request: BatchRequest) => BatchResponse;
   onBatchReclassify?: (request: BatchRequest) => Promise<BatchResponse>;
+  getTransactionDetails?: (transactionId: string) => Promise<{
+    date?: string;
+    payeeName?: string;
+    importedPayee?: string;
+    accountName?: string;
+    categoryId?: string;
+    categoryName?: string;
+    isParent?: boolean;
+    subtransactions?: { amount: number; categoryId?: string; categoryName?: string }[];
+  } | null>;
+  getTransactionsBulk?: (transactionIds: string[]) => Promise<Record<string, {
+    date?: string;
+    payeeName?: string;
+    importedPayee?: string;
+    accountName?: string;
+    categoryId?: string;
+    categoryName?: string;
+    isParent?: boolean;
+    subtransactions?: { amount: number; categoryId?: string; categoryName?: string }[];
+  }>>;
 }
 
 export function createWebServer(deps: WebServerDeps): express.Express {
@@ -470,29 +491,156 @@ export function createWebServer(deps: WebServerDeps): express.Express {
       }
     });
 
+    // --- Tax-exempt category management ---
+    app.get('/api/tax-exempt-categories', (_req: Request, res: Response) => {
+      res.json(receiptStore.getTaxExemptCategoriesAll());
+    });
+
+    app.post('/api/tax-exempt-categories', (req: Request, res: Response) => {
+      const { namePrefix, reason } = req.body as { namePrefix?: string; reason?: string };
+      if (!namePrefix || !namePrefix.trim()) {
+        res.status(400).json({ error: 'namePrefix is required' });
+        return;
+      }
+      receiptStore.addTaxExemptPrefix(namePrefix.trim(), reason);
+      res.json({ success: true });
+    });
+
+    app.delete('/api/tax-exempt-categories/:namePrefix', (req: Request, res: Response) => {
+      const ok = receiptStore.removeTaxExemptPrefix(req.params.namePrefix as string);
+      if (!ok) {
+        res.status(404).json({ error: 'Prefix not found' });
+        return;
+      }
+      res.json({ success: true });
+    });
+
+    // --- Transaction details (live lookup from Actual Budget) ---
+    app.get('/api/transactions/:id/details', async (req: Request, res: Response) => {
+      if (!deps.getTransactionDetails) {
+        res.status(501).json({ error: 'Not configured' });
+        return;
+      }
+      try {
+        const details = await deps.getTransactionDetails(req.params.id as string);
+        if (!details) {
+          res.status(404).json({ error: 'Transaction not found' });
+          return;
+        }
+        res.json(details);
+      } catch (error) {
+        console.error('Error fetching transaction details:', error);
+        res.status(500).json({ error: 'Failed to fetch transaction' });
+      }
+    });
+
+    // --- Bulk transaction details (for queue page lazy loading) ---
+    app.post('/api/transactions/bulk-details', async (req: Request, res: Response) => {
+      if (!deps.getTransactionsBulk) {
+        res.status(501).json({ error: 'Not configured' });
+        return;
+      }
+      const { transactionIds } = req.body as { transactionIds?: string[] };
+      if (!transactionIds || !Array.isArray(transactionIds) || transactionIds.length === 0) {
+        res.json({});
+        return;
+      }
+      try {
+        const ids = transactionIds.slice(0, 200);
+        const result = await deps.getTransactionsBulk(ids);
+        res.json(result);
+      } catch (error) {
+        console.error('Error fetching bulk transaction details:', error);
+        res.status(500).json({ error: 'Failed to fetch transactions' });
+      }
+    });
+
+    // --- Keep Category: mark matches as applied without classification ---
+    app.post('/api/batch/keep-category', (req: Request, res: Response) => {
+      const { matchIds } = req.body as { matchIds?: string[] };
+      if (!matchIds || !Array.isArray(matchIds) || matchIds.length === 0) {
+        res.json({
+          processed: 0, succeeded: 0, failed: 0, errors: [],
+        });
+        return;
+      }
+      const result: {
+        processed: number; succeeded: number; failed: number;
+        errors: { matchId: string; error: string }[];
+      } = {
+        processed: matchIds.length, succeeded: 0, failed: 0, errors: [],
+      };
+      // eslint-disable-next-line no-restricted-syntax
+      for (const matchId of matchIds) {
+        const match = receiptStore.getMatch(matchId);
+        if (!match) {
+          result.failed++;
+          result.errors.push({ matchId, error: 'Match not found' });
+          continue;
+        }
+        if (match.status === 'applied') {
+          result.failed++;
+          result.errors.push({ matchId, error: 'Match already applied' });
+          continue;
+        }
+        receiptStore.updateMatchStatus(matchId, 'applied');
+        receiptStore.insertMatchHistory({
+          receiptId: match.receiptId as string,
+          newTransactionId: match.transactionId as string,
+          action: 'keep-category',
+          oldMatchConfidence: match.matchConfidence as string,
+          performedBy: 'user',
+        });
+        result.succeeded++;
+      }
+      console.log(`Batch keep-category: ${result.succeeded}/${result.processed} succeeded`);
+      res.json(result);
+    });
+
     app.patch('/api/line-items/:id', (req: Request, res: Response) => {
-      const { status } = req.body as { status?: string };
+      const { status, categoryId, categoryName } = req.body as {
+        status?: string;
+        categoryId?: string;
+        categoryName?: string;
+      };
+
+      const id = req.params.id as string;
+      const lineItem = receiptStore.getLineItemClassification(id);
+      if (!lineItem) {
+        res.status(404).json({ error: 'Line item not found' });
+        return;
+      }
+      const matchId = lineItem.receiptMatchId as string;
+
+      // Category change: update category + reconcile tax
+      if (categoryId) {
+        receiptStore.updateLineItemClassification(id, {
+          suggestedCategoryId: categoryId,
+          suggestedCategoryName: categoryName,
+          classificationType: 'manual',
+          confidence: 'high',
+        });
+        const classifications = reconcileMatchTax(receiptStore, matchId);
+        res.json({ success: true, classifications });
+        return;
+      }
+
+      // Status change
       if (status !== 'approved' && status !== 'rejected') {
         res.status(400).json({ error: 'Status must be "approved" or "rejected"' });
         return;
       }
-      receiptStore.updateLineItemStatus(req.params.id as string, status);
+      receiptStore.updateLineItemStatus(id, status);
 
       // Auto-promote match status when all line items are approved
-      const lineItem = receiptStore.getLineItemClassification(
-        req.params.id as string,
-      );
-      if (lineItem) {
-        const matchId = lineItem.receiptMatchId as string;
-        const all = receiptStore.getClassificationsForMatch(matchId);
-        const allApproved = all.length > 0
-          && all.every((c) => c.status === 'approved');
-        if (allApproved) {
-          receiptStore.updateMatchStatus(matchId, 'approved');
-        }
+      const all = receiptStore.getClassificationsForMatch(matchId);
+      const allApproved = all.length > 0
+        && all.every((c) => c.status === 'approved');
+      if (allApproved) {
+        receiptStore.updateMatchStatus(matchId, 'approved');
       }
 
-      res.json({ success: true });
+      res.json({ success: true, classifications: all });
     });
   }
 

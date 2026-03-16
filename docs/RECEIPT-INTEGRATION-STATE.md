@@ -2,9 +2,10 @@
 
 **Date**: 2026-03-13
 **Branch**: `feature/receipt-integration`
+**Sub-branch**: `feature/receipt-category-editing` ([PR #3](https://github.com/ExactDoug/actual-ai/pull/3) → `feature/receipt-integration`)
 **Base**: `master`
-**PR**: [#2](https://github.com/ExactDoug/actual-ai/pull/2) (open)
-**Commits on branch**: 35 (from `6010f7f` through `664e9b7`)
+**PR**: [#2](https://github.com/ExactDoug/actual-ai/pull/2) (open, receipt-integration → master)
+**Commits on branch**: 36 + 4 sub-branch (from `6010f7f` through `00c17a8`)
 **Deployed**: Yes — running on dh01 as `actual-ai` container
 **Image**: `hr01.exactpartners.com/apps/actual-ai:feature-receipt-integration`
 **FQDN**: `actual-ai.dandelionfieldsnm.com` (Caddy reverse proxy on dh01)
@@ -19,7 +20,7 @@ running with `dryRun` enabled for the standard transaction classifier, but the
 receipt pipeline is independently gated by manual approval and is functional
 end-to-end.
 
-All 175 tests pass across 22 test suites. The full `npm run build` succeeds
+All 176 tests pass across 22 test suites. The full `npm run build` succeeds
 with zero errors.
 
 The system can now:
@@ -28,11 +29,17 @@ The system can now:
 - Classify individual line items on matched receipts via LLM with structured
   output (JSON schema enforcement via `generateObject()` + Zod)
 - Run a 4-tier fallback pipeline for low-confidence items
-- Distribute tax proportionally across line items
+- Distribute tax proportionally across line items, with DB-backed tax-exempt
+  category management (replaces hardcoded regex)
 - Apply single-item receipt categories directly (no split needed)
 - Convert multi-item transactions into split transactions with per-item categories
 - Roll back splits to restore the original transaction
 - Review all of the above via server-rendered HTML pages with filtering, bulk actions
+- Edit line item categories inline via click-to-edit dropdowns with live tax recalculation
+- View the current Actual Budget transaction category (single or split) for comparison
+- Display transaction payee, date, and category in the match queue via lazy-loaded bulk lookup
+- "Keep Category" workflow to finalize matches without invoking AI classification
+- Manage tax-exempt category prefixes via REST API
 
 The integration is gated behind the `receiptMatching` feature flag and is
 completely dormant unless explicitly enabled.
@@ -42,6 +49,11 @@ completely dormant unless explicitly enabled.
 ## 2. Branch & Commit History
 
 ```
+00c17a8 feat: add transaction details columns and keep-category action to queue view
+cd82adc fix: make Apply button pulse continuously after approve actions
+9cecc26 feat: show current transaction category via live Actual Budget lookup
+e956f1f fix: open budget connection before apply-split and rollback
+15adbdc feat: add editable category dropdowns with live tax recalculation
 664e9b7 fix: correct boolean binding in updateLineItemClassification for SQLite
 9be07b0 fix: reconcile tax allocation after fallback pipeline changes categories
 11343de fix: infer taxability from LLM category assignments for tax allocation
@@ -135,7 +147,7 @@ Actual Budget API → Transaction Fetch → Matching Service
                               Line Item Classifier (LLM)
                                               ↓
                         Infer taxability from category names
-                        (NM rules: groceries/Rx exempt)
+                        (DB-backed tax_exempt_categories table)
                                               ↓
                         Tax allocation (taxable items only)
                                               ↓
@@ -146,7 +158,7 @@ Actual Budget API → Transaction Fetch → Matching Service
                         Tax reconciliation (re-infer + reallocate)
                                               ↓
                      Review UI → Approve/Reject → Apply
-                                              ↓
+                         ↕ (edit category → re-infer tax → recalc)
                               Actual Budget API (update/split)
 ```
 
@@ -156,7 +168,8 @@ Actual Budget API → Transaction Fetch → Matching Service
 2. **Receipt pipeline is independent of dryRun**: The `dryRun` flag gates the standard transaction classifier. The receipt pipeline has its own approval gate (classify → approve → apply) and only writes to Actual Budget when the user explicitly clicks Apply.
 3. **Single-item optimization**: Receipts with 1 line item just update the transaction category directly instead of the delete/reimport split flow
 4. **Structured output**: LLM classification uses `generateObject()` with Zod schema, guaranteeing valid JSON responses with correct types
-5. **Post-LLM tax inference**: Veryfi's per-item `type` field is unreliable (e.g., greeting cards typed as "food"). Instead, taxability is inferred from the LLM's category assignments using NM rules: categories matching `/^(groceries|medical|health|pharmacy|prescription)/i` are tax-exempt. Tax is reconciled again after the fallback pipeline, which may change categories.
+5. **Post-LLM tax inference**: Veryfi's per-item `type` field is unreliable (e.g., greeting cards typed as "food"). Instead, taxability is inferred from the LLM's category assignments using DB-backed prefix matching against the `tax_exempt_categories` table (seeded with `groceries`, `medical`, `health`, `pharmacy`, `prescription`). Tax is reconciled again after the fallback pipeline or manual category edits, which may change categories. The standalone `reconcileMatchTax()` function handles re-inference and reallocation.
+6. **Inline category editing**: Line item categories are editable via click-to-edit dropdowns on the receipt detail page. Changing a category triggers server-side tax reconciliation via `reconcileMatchTax()` and returns updated classifications for all rows, keeping tax totals consistent without a page reload.
 
 ---
 
@@ -176,6 +189,7 @@ Actual Budget API → Transaction Fetch → Matching Service
 | `line-item-classifier.ts` | LLM classification + 4-tier fallback pipeline |
 | `split-transaction-service.ts` | Apply/rollback split transactions in Actual Budget |
 | `batch-service.ts` | Batch operations (classify/approve/apply/unmatch/reject/reclassify) |
+| `tax-reconciler.ts` | Standalone tax reconciliation (re-infer taxability from DB, reallocate tax) |
 | `index.ts` | Barrel exports |
 
 ### New Files (src/web/views/)
@@ -195,12 +209,16 @@ Actual Budget API → Transaction Fetch → Matching Service
 
 | File | Changes |
 |------|---------|
-| `app.ts` | Receipt fetch/match on startup, batch callbacks, `createTempApiService` with `mkdirSync` fix |
+| `app.ts` | Receipt fetch/match on startup, batch callbacks, `createTempApiService` with `mkdirSync` fix, budget connection wrappers for apply/rollback, `getTransactionDetails()` callback, `getTransactionsBulk()` callback, `categoryId` in matching pipeline |
 | `src/container.ts` | DI wiring for all receipt services |
 | `src/config.ts` | Receipt-related env vars and feature flags |
 | `src/actual-api-service.ts` | `getTransactionById()`, `importTransactionsWithSplits()`, `deleteTransaction()` |
-| `src/web/server.ts` | 4 page routes + 16 API endpoints for receipt workflow |
+| `src/web/server.ts` | 4 page routes + 22 API endpoints for receipt workflow (added tax-exempt CRUD, transaction details, bulk transaction details, keep-category batch action, extended PATCH for category changes) |
 | `src/web/views/renderer.ts` | Receipt nav links in layout |
+| `src/web/views/receipt-renderer.ts` | Click-to-edit category dropdowns, live tax recalc, original category display, continuous Apply pulse, queue transaction columns (payee/date/category) with lazy loading, Keep Category button, detail page payee/date/account rows |
+| `src/receipt/line-item-classifier.ts` | Delegates tax reconciliation to `tax-reconciler.ts`, uses `store.isCategoryTaxExempt()` instead of regex |
+| `src/receipt/matching-service.ts` | Passes `categoryId` through matching pipeline to `createMatch()`, relaxed unmatch guard for "kept" matches |
+| `src/receipt/receipt-store.ts` | `tax_exempt_categories` table, `transactionCategoryId` column, 5 new tax-exempt methods |
 | `jest.config.js` | `testPathIgnorePatterns` to exclude `dist/` duplicates |
 
 ### Test Files
@@ -216,7 +234,7 @@ Actual Budget API → Transaction Fetch → Matching Service
 | `tests/receipt-views.test.ts` | Store queue/detail methods, all 4 view renderers |
 | + 15 pre-existing test files | Original transaction classifier tests |
 
-**Total: 175 tests across 22 suites** (was previously double-counted as 302/41 due to `dist/` being picked up by jest)
+**Total: 176 tests across 22 suites** (was previously double-counted as 302/41 due to `dist/` being picked up by jest)
 
 ---
 
@@ -243,13 +261,19 @@ Actual Budget API → Transaction Fetch → Matching Service
 | GET | `/api/matches` | List matches with optional status filter |
 | POST | `/api/matches/:id/unmatch` | Unmatch a receipt from its transaction |
 | POST | `/api/matches/:id/rematch` | Rematch to a different transaction |
-| PATCH | `/api/line-items/:id` | Update line item status (approve/reject) |
+| PATCH | `/api/line-items/:id` | Update line item status or category (with tax recalc) |
+| GET | `/api/tax-exempt-categories` | List tax-exempt category prefixes |
+| POST | `/api/tax-exempt-categories` | Add a tax-exempt category prefix |
+| DELETE | `/api/tax-exempt-categories/:namePrefix` | Remove a tax-exempt category prefix |
+| GET | `/api/transactions/:id/details` | Live lookup of transaction category from Actual Budget |
 | POST | `/api/batch/classify` | Batch classify multiple matches |
 | POST | `/api/batch/approve` | Batch approve line items |
 | POST | `/api/batch/apply` | Batch apply splits |
 | POST | `/api/batch/unmatch` | Batch unmatch |
 | POST | `/api/batch/reject` | Batch reject |
 | POST | `/api/batch/reclassify` | Batch re-classify |
+| POST | `/api/batch/keep-category` | Batch keep existing category (skip AI classification) |
+| POST | `/api/transactions/bulk-details` | Bulk lookup of transaction payee, date, account, category from Actual Budget |
 
 ---
 
@@ -259,16 +283,21 @@ Actual Budget API → Transaction Fetch → Matching Service
 
 - Filterable by: status, confidence, override flag, vendor, date range, amount range
 - Sortable columns: status, confidence, vendor, date, amount, matched time
-- Checkbox selection with bulk actions: classify, approve, apply, reject, unmatch
+- Checkbox selection with bulk actions: classify, approve, keep category, apply, reject, unmatch
+- **Lazy-loaded transaction columns**: Payee, Transaction Date, and Category are fetched in bulk from Actual Budget after page load via `POST /api/transactions/bulk-details` and populated client-side. Split transactions display as "Split: Cat1, Cat2".
+- **Keep Category action**: Marks selected matches as `applied` without invoking AI classification — for transactions whose existing category is already correct
 - Row click navigates to detail page
 
 ### Receipt Detail (`/receipts/:id`)
 
 Two-column layout:
-- **Left**: Receipt metadata, line items table with per-item approve/reject buttons, raw OCR data
-- **Right**: Transaction details, override warning banner, split preview with Apply button, actions (classify, re-classify, unmatch, rollback)
+- **Left**: Receipt metadata, line items table with per-item approve/reject buttons, click-to-edit category dropdowns (grouped by category group), raw OCR data
+- **Right**: Transaction details with live Actual Budget category lookup (single or split), override warning banner, split preview with Apply button, actions (classify, re-classify, unmatch, rollback)
+- Matched Transaction card includes: payee name, transaction date, account name, current category (all fetched live from Actual Budget via `GET /api/transactions/:id/details`)
 - Apply button shows "Apply Category" for single-item, "Apply Split" for multi-item
-- Gentle pulse animation on Apply button after approving line items
+- Continuous pulse animation on Apply button after any approve/reject action
+- Category changes trigger server-side tax reconciliation; all rows update live
+- Green dot indicator on tax-exempt line items
 
 ### Unmatched Receipts (`/receipts/unmatched`)
 
@@ -325,6 +354,24 @@ proportional allocation (assumes misclassification).
 
 `npm run build` compiled test files into `dist/`, and jest picked them up as additional test files. Fixed by adding `testPathIgnorePatterns: ['/dist/']` to jest config. True count: 175 tests / 22 suites (was reported as 302/41).
 
+### FIXED: Apply Split / Rollback 500 error — budget not open (e956f1f)
+
+**Severity**: Blocked the apply-split workflow entirely from the Review UI
+**Root cause**: `onReceiptApplySplit` and `onReceiptRollback` callbacks in `app.ts` called
+`splitTransactionService.applySplit()` / `rollbackSplit()` directly without opening a budget
+connection. The Actual Budget API is only open during cron job execution; web UI requests have
+no active connection, causing `APIError: No budget file is open`.
+**Fix**: Wrapped both callbacks with `createTempApiService()` + `shutdown()` in try/finally,
+matching the pattern used by other web UI callbacks (e.g., `onApply`, `getCategories`).
+
+### FIXED: Apply button pulse animation only ran twice (cd82adc)
+
+**Severity**: Cosmetic — the Apply button was supposed to pulse continuously after approve/reject
+**Root cause**: CSS had `animation: btn-pulse 1.5s ease-in-out 2` (2 iterations), and
+`approveAll()` / `rejectAll()` called `location.reload()` which reset all UI state.
+**Fix**: Changed animation to `infinite`, made approve/reject functions update badges inline
+instead of reloading, added auto-pulse on page load when any items are already approved.
+
 ### OPEN: LLM classification accuracy for ambiguous items
 
 **Severity**: Low — items like "BLMNG UPGRADE 6"" (bakery bloom upgrade) get
@@ -341,14 +388,17 @@ enabled — `webSearch` / `freeWebSearch` feature flags not set in production).
 
 ```
 pending → classified → approved → applied
-                   ↘ rejected
+  │                 ↘ rejected
+  └── keep-category ──────────→ applied (no classifications created)
 ```
 
 - `pending`: Match created, no classification yet
 - `classified`: LLM has assigned categories to line items
 - `approved`: All line items reviewed and approved (auto-promoted when last item approved individually)
-- `applied`: Categories written to Actual Budget
+- `applied`: Categories written to Actual Budget (via split/category apply), OR match finalized via "Keep Category" (no AI invoked, no Actual Budget writes — existing category retained)
 - `rejected`: User rejected the match
+
+**Keep Category**: Matches set to `applied` via "Keep Category" have no `preSplitSnapshot` and no `line_item_classifications`. They can be safely unmatched (the unmatch guard only blocks applied matches that have a snapshot, i.e., those with actual splits that need rollback).
 
 ### Line Item Status
 
@@ -364,8 +414,9 @@ pending → classified → approved → applied
 ### User Workflow
 
 ```
-1. View queue (/receipts) → see matched receipts
-2. Click a match → detail page (/receipts/:id)
+1. View queue (/receipts) → see matched receipts with payee, date, category columns
+2a. If existing category is correct → select matches → "Keep Category" → done
+2b. Click a match → detail page (/receipts/:id)
 3. Click "Classify" → LLM assigns categories
 4. Review line items → approve/reject each (saves immediately)
 5. Click "Apply Category" or "Apply Split" → writes to Actual Budget
@@ -426,6 +477,14 @@ RECEIPT_FETCH_DAYS_BACK=30
 ### Remaining Plan Items
 
 - [ ] **Phase 8**: Live testing — verify full workflow end-to-end with dryRun removed
+  - [x] Apply split workflow verified (budget connection fix applied)
+  - [x] Category editing + live tax recalc verified in production
+  - [x] Approve → Apply workflow works end-to-end via Review UI
+  - [x] Transaction details (payee, date, category) display in queue via lazy loading
+  - [x] "Keep Category" workflow verified — marks matches as applied without AI
+  - [ ] Verify rollback restores original transaction correctly
+  - [ ] Verify `#actual-ai-receipt` tag management
+  - [ ] Test with fresh uncategorized transactions
 - [ ] **Phase 9**: Production hardening — remove dryRun, monitor first real applies, verify rollback
 
 ### Deferred
@@ -433,3 +492,4 @@ RECEIPT_FETCH_DAYS_BACK=30
 - [ ] Unmatched transactions page (`/transactions/unmatched`) — requires persistent Actual Budget API connection
 - [ ] `autoSplitTransactions` feature flag — auto-apply exact-match receipt splits without review
 - [ ] Manual match UI — transaction picker modal for unmatched receipts
+- [ ] Tax-exempt category management UI (currently API-only via REST endpoints)

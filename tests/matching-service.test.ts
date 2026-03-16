@@ -423,13 +423,24 @@ describe('MatchingService', () => {
       expect(() => service.unmatch('nonexistent')).toThrow('Match not found');
     });
 
-    it('should throw when match is applied', () => {
+    it('should throw when match is applied with snapshot', () => {
+      const receiptId = insertReceipt(store, { totalAmount: 1000 });
+      const matchId = store.createMatch('tx-1', receiptId, 'exact');
+      store.updateMatchStatus(matchId, 'applied');
+      store.setPreSplitSnapshot(matchId, JSON.stringify({ id: 'tx-1', amount: -1000 }));
+
+      const service = new MatchingService(store, 5, 1, true);
+      expect(() => service.unmatch(matchId)).toThrow('Rollback the split first');
+    });
+
+    it('should allow unmatch on applied match without snapshot (kept)', () => {
       const receiptId = insertReceipt(store, { totalAmount: 1000 });
       const matchId = store.createMatch('tx-1', receiptId, 'exact');
       store.updateMatchStatus(matchId, 'applied');
 
       const service = new MatchingService(store, 5, 1, true);
-      expect(() => service.unmatch(matchId)).toThrow('Rollback the split first');
+      expect(() => service.unmatch(matchId)).not.toThrow();
+      expect(store.getMatch(matchId)).toBeUndefined();
     });
   });
 

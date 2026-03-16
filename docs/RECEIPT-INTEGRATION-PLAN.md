@@ -4,7 +4,7 @@
 **Branch**: `feature/receipt-integration`
 **Depends on**: Veryfi TypeScript client (`src/veryfi/`) — complete
 
-**Last updated**: 2026-03-13 (tax reconciliation fix)
+**Last updated**: 2026-03-13 (Phase 7.6 complete — transaction details columns + keep-category action)
 
 ---
 
@@ -523,7 +523,131 @@ Summary cards:
 
 ---
 
-## Phase 8: Live Testing & Verification ⬜ NOT STARTED
+## Phase 7.5: Category Editing & Tax Reconciliation ✅ COMPLETE
+
+Editable category dropdowns on the receipt detail page with live tax
+recalculation, DB-backed tax-exempt categories, and original transaction
+category display.
+
+**Branch**: `feature/receipt-category-editing`
+**PR**: [#3](https://github.com/ExactDoug/actual-ai/pull/3) → `feature/receipt-integration`
+
+### 7.5.1 — DB-Backed Tax-Exempt Categories
+
+- [x] New `tax_exempt_categories` table with case-insensitive prefix matching
+- [x] Seeded with 5 NM-specific prefixes (groceries, medical, health, pharmacy, prescription)
+- [x] `isCategoryTaxExempt()` uses SQL `LIKE namePrefix || '%' COLLATE NOCASE`
+- [x] REST API: GET/POST/DELETE `/api/tax-exempt-categories`
+- [x] Replaces hardcoded regex `/^(groceries|medical|health|pharmacy|prescription)/i`
+
+### 7.5.2 — Standalone Tax Reconciler
+
+- [x] Extracted `reconcileMatchTax()` from `line-item-classifier.ts` into `tax-reconciler.ts`
+- [x] Uses DB-backed `store.isCategoryTaxExempt()` for taxability inference
+- [x] Called from: PATCH endpoint (category change), line-item-classifier (fallback pipeline)
+- [x] Returns refreshed classifications array for live UI updates
+
+### 7.5.3 — Click-to-Edit Category Dropdowns
+
+- [x] Category cell: `<span>` with dashed underline + hidden `<select>`
+- [x] Click span → show `<select>` populated from cached `/api/categories`
+- [x] `<select>` uses `<optgroup>` for category groups
+- [x] On change → PATCH `{ categoryId, categoryName }` → server recalculates tax → all rows update
+
+### 7.5.4 — Live Transaction Category Display
+
+- [x] `transactionCategoryId` column added to `receipt_matches` (populated on new matches)
+- [x] `GET /api/transactions/:id/details` endpoint for live Actual Budget lookup
+- [x] Handles both single-category and already-split (parent with subtransactions) transactions
+- [x] Displayed in Matched Transaction card on receipt detail page
+
+### 7.5.5 — Apply Split Budget Connection Fix
+
+- [x] `onReceiptApplySplit` and `onReceiptRollback` wrapped with `createTempApiService()`
+- [x] Fixed 500 error: `APIError: No budget file is open` on Apply Split from UI
+
+### 7.5.6 — Apply Button Pulse Animation
+
+- [x] Changed CSS from 2 iterations to `infinite`
+- [x] Approve/reject update badges inline (no page reload)
+- [x] Auto-pulse on page load when any items already approved
+
+**Files created**: `src/receipt/tax-reconciler.ts`
+
+**Files modified**: `src/receipt/receipt-store.ts` (tax_exempt_categories table, new methods),
+`src/receipt/line-item-classifier.ts` (delegate to reconciler, use DB prefixes),
+`src/receipt/matching-service.ts` (categoryId passthrough),
+`src/web/server.ts` (extended PATCH, tax-exempt endpoints, transaction details),
+`src/web/views/receipt-renderer.ts` (dropdowns, live updates, pulse animation),
+`app.ts` (budget connection wrappers, categoryId in matching, getTransactionDetails)
+
+---
+
+## Phase 7.6: Transaction Details & Keep-Category Action ✅ COMPLETE
+
+Queue page transaction columns and a "Keep Category" workflow for matches
+whose existing Actual Budget category is already correct.
+
+**Commit**: `00c17a8`
+
+### 7.6.1 — Bulk Transaction Lookup
+
+- [x] `getTransactionsBulk()` callback in `app.ts`: opens ONE temp API connection, fetches all transactions/payees/accounts/categories, filters to requested IDs, returns `Record<string, TransactionSummary>`
+- [x] Each summary includes: `date`, `payeeName`, `importedPayee`, `accountName`, `categoryId`, `categoryName`, `isParent`, `subtransactions[]`
+- [x] Payee UUID → name resolution via `getPayees()` lookup map
+- [x] YYYYMMDD integer dates converted to YYYY-MM-DD strings
+
+### 7.6.2 — Bulk Transaction Details Endpoint
+
+- [x] `POST /api/transactions/bulk-details` in `server.ts`
+- [x] Accepts `{ transactionIds: string[] }` body (capped at 200)
+- [x] `WebServerDeps` interface extended with `getTransactionsBulk` type signature
+
+### 7.6.3 — Queue Page Transaction Columns
+
+- [x] 3 new columns: **Payee**, **Tx Date**, **Category** (inserted into existing table)
+- [x] Cells render as `—` initially, populated by lazy-loading IIFE
+- [x] `data-tx-id` attribute on each row for DOM targeting
+- [x] Split transactions display as "Split: Cat1, Cat2"
+- [x] Uncategorized transactions show dimmed `—`
+
+### 7.6.4 — Keep Category Batch Action
+
+- [x] "Keep Category" button in actions bar (olive/gold, between Approve and Apply)
+- [x] `POST /api/batch/keep-category` endpoint: sets match status to `applied` without creating classifications or writing to Actual Budget
+- [x] Match history recorded with `action: 'keep-category'`, `performedBy: 'user'`
+- [x] `batchAction()` JS extended to handle the `keep-category` action path
+
+### 7.6.5 — Unmatch Guard Relaxation
+
+- [x] `matching-service.ts`: unmatch guard changed from `status === 'applied'` to `status === 'applied' && preSplitSnapshot`
+- [x] "Kept" matches (applied but no snapshot) can be safely unmatched
+- [x] Actually-applied matches (with snapshot) still require rollback first
+
+### 7.6.6 — Detail Page Transaction Fields
+
+- [x] 3 new rows in Matched Transaction card: Payee, Transaction Date, Account
+- [x] Extended `getTransactionDetails` response includes `date`, `payeeName`, `accountName`
+- [x] Existing live-lookup IIFE populates the new fields
+
+### 7.6.7 — Deliverables & Verification
+
+- [x] Queue page shows payee, date, and category after lazy load completes
+- [x] Split transactions display "Split: Cat1, Cat2" in category column
+- [x] "Keep Category" sets selected matches to `applied` without AI invocation
+- [x] "Kept" matches can be unmatched without requiring rollback
+- [x] Detail page shows payee, date, and account in Matched Transaction card
+- [x] 176 tests pass (175 + 1 new test for unmatch-on-kept-match)
+
+**Files modified**: `app.ts` (getTransactionsBulk callback, extended getTransactionDetails),
+`src/web/server.ts` (bulk-details endpoint, keep-category endpoint, WebServerDeps),
+`src/web/views/receipt-renderer.ts` (queue columns, lazy loading, Keep Category button, detail fields),
+`src/receipt/matching-service.ts` (unmatch guard relaxation),
+`tests/matching-service.test.ts` (split test into with/without snapshot)
+
+---
+
+## Phase 8: Live Testing & Verification ⬜ IN PROGRESS
 
 Test the full pipeline with real data before production deployment.
 
@@ -585,14 +709,21 @@ Test the full pipeline with real data before production deployment.
 
 ### 8.5 — Split Transaction Verification
 
-- [ ] Apply split: original transaction replaced with subtransactions
+- [x] Apply split: budget connection established before API calls (e956f1f)
+- [ ] Apply split: original transaction replaced with subtransactions (end-to-end)
 - [ ] Transaction ID behavior documented (preserved or remapped)
 - [ ] Rollback: original transaction restored from snapshot
 - [ ] `#actual-ai-receipt` tag appended/removed correctly
 
 ### 8.6 — Review UI Workflow
 
-- [ ] Full workflow via UI: view matches → classify → approve → apply
+- [x] Full workflow via UI: view matches → classify → approve → apply (verified 2026-03-13)
+- [x] Category editing via click-to-edit dropdowns (verified 2026-03-13)
+- [x] Live tax recalculation after category change (verified 2026-03-13)
+- [x] Current transaction category displayed in Matched Transaction card
+- [x] Queue page transaction columns (payee, date, category) via lazy loading (verified 2026-03-13)
+- [x] "Keep Category" workflow verified — marks matches as applied without AI (verified 2026-03-13)
+- [x] Detail page shows payee, date, and account in Matched Transaction card (verified 2026-03-13)
 - [ ] Unmatch/rematch from UI
 - [ ] Bulk operations via UI
 - [ ] Override approval gate works for already-categorized transactions
@@ -635,22 +766,26 @@ Phases 1-5.5 ✅ COMPLETE
      |
      ├── Phase 5.5: Fallback Classification Pipeline ✅
      |     (web search + individual LLM, rules, majority, manual review)
-     |     (should be implemented before batch ops, since batch classify
-     |      needs to run the fallback chain automatically)
      |
      ├── Phase 6: Batch Operations ✅
      |     (batch endpoints, re-classification, batch service)
-     |     (batch classify triggers fallback chain for low-confidence items)
      |
      ├── Phase 7: Review UI — Receipt Views ✅
      |     (filtering, selection, bulk actions, detail pages)
-     |     (depends on Phase 6 for bulk action backends)
      |
-     └── Phase 8: Live Testing
-           (can start in parallel with Phases 5.5-7 for API-level testing)
+     ├── Phase 7.5: Category Editing & Tax Reconciliation ✅
+     |     (click-to-edit dropdowns, DB-backed tax-exempt categories,
+     |      live tax recalc, transaction category display, apply fix)
+     |
+     ├── Phase 7.6: Transaction Details & Keep-Category ✅
+     |     (queue payee/date/category columns, bulk lookup,
+     |      keep-category action, unmatch guard relaxation)
+     |
+     └── Phase 8: Live Testing ⬜ IN PROGRESS
+           (partially verified — apply, category editing, keep-category confirmed)
            |
            └── Phase 9: Production Deployment
-                 (after Phases 5.5-8 complete)
+                 (after Phase 8 complete)
 ```
 
 Phase 5.5 should be implemented first — the batch classification in Phase 6

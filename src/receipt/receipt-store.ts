@@ -89,6 +89,20 @@ class ReceiptStore {
       CREATE INDEX IF NOT EXISTS idx_receipt_matches_receiptId
         ON receipt_matches(receiptId);
 
+      CREATE TABLE IF NOT EXISTS tax_exempt_categories (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        namePrefix TEXT NOT NULL UNIQUE COLLATE NOCASE,
+        reason TEXT,
+        createdAt TEXT NOT NULL DEFAULT (datetime('now'))
+      );
+
+      INSERT OR IGNORE INTO tax_exempt_categories (namePrefix, reason) VALUES
+        ('groceries', 'NM gross receipts tax exemption'),
+        ('medical', 'NM gross receipts tax exemption'),
+        ('health', 'NM gross receipts tax exemption'),
+        ('pharmacy', 'NM gross receipts tax exemption'),
+        ('prescription', 'NM gross receipts tax exemption');
+
       CREATE VIEW IF NOT EXISTS transaction_receipt_status AS
       SELECT
         rm.transactionId,
@@ -107,6 +121,13 @@ class ReceiptStore {
       FROM receipt_matches rm
       JOIN receipts r ON r.id = rm.receiptId;
     `);
+
+    // Idempotent column additions for existing databases
+    try {
+      this.db.exec('ALTER TABLE receipt_matches ADD COLUMN transactionCategoryId TEXT');
+    } catch {
+      // Column already exists
+    }
   }
 
   // ---------------------------------------------------------------------------
@@ -230,13 +251,13 @@ class ReceiptStore {
   // Matches
   // ---------------------------------------------------------------------------
 
-  createMatch(transactionId: string, receiptId: string, confidence: string, overridesExisting = false): string {
+  createMatch(transactionId: string, receiptId: string, confidence: string, overridesExisting = false, transactionCategoryId?: string): string {
     const id = crypto.randomUUID();
     const now = new Date().toISOString();
     this.db.prepare(`
-      INSERT INTO receipt_matches (id, transactionId, receiptId, matchConfidence, matchedAt, status, overridesExisting)
-      VALUES (?, ?, ?, ?, ?, 'pending', ?)
-    `).run(id, transactionId, receiptId, confidence, now, overridesExisting ? 1 : 0);
+      INSERT INTO receipt_matches (id, transactionId, receiptId, matchConfidence, matchedAt, status, overridesExisting, transactionCategoryId)
+      VALUES (?, ?, ?, ?, ?, 'pending', ?, ?)
+    `).run(id, transactionId, receiptId, confidence, now, overridesExisting ? 1 : 0, transactionCategoryId ?? null);
     return id;
   }
 
@@ -666,6 +687,45 @@ class ReceiptStore {
     return {
       match, receipt, classifications, history,
     };
+  }
+
+  // ---------------------------------------------------------------------------
+  // Tax-Exempt Categories
+  // ---------------------------------------------------------------------------
+
+  getTaxExemptPrefixes(): string[] {
+    const rows = this.db.prepare(
+      'SELECT namePrefix FROM tax_exempt_categories ORDER BY namePrefix',
+    ).all() as { namePrefix: string }[];
+    return rows.map((r) => r.namePrefix);
+  }
+
+  isCategoryTaxExempt(categoryName: string): boolean {
+    if (!categoryName) return false;
+    const row = this.db.prepare(
+      `SELECT 1 FROM tax_exempt_categories
+       WHERE ? LIKE namePrefix || '%' COLLATE NOCASE LIMIT 1`,
+    ).get(categoryName);
+    return !!row;
+  }
+
+  addTaxExemptPrefix(namePrefix: string, reason?: string): void {
+    this.db.prepare(
+      'INSERT OR IGNORE INTO tax_exempt_categories (namePrefix, reason) VALUES (?, ?)',
+    ).run(namePrefix, reason ?? null);
+  }
+
+  removeTaxExemptPrefix(namePrefix: string): boolean {
+    const result = this.db.prepare(
+      'DELETE FROM tax_exempt_categories WHERE namePrefix = ?',
+    ).run(namePrefix);
+    return result.changes > 0;
+  }
+
+  getTaxExemptCategoriesAll(): { id: number; namePrefix: string; reason: string | null; createdAt: string }[] {
+    return this.db.prepare(
+      'SELECT * FROM tax_exempt_categories ORDER BY namePrefix',
+    ).all() as { id: number; namePrefix: string; reason: string | null; createdAt: string }[];
   }
 
   // ---------------------------------------------------------------------------

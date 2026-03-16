@@ -6,6 +6,7 @@ import PromptGenerator from '../prompt-generator';
 import { RuleDescription, ToolServiceI } from '../types';
 import ReceiptStore from './receipt-store';
 import allocateTax, { validateReceiptBalance } from './tax-allocator';
+import { reconcileMatchTax } from './tax-reconciler';
 import { ReceiptDocument } from './types';
 
 const lineItemClassificationSchema = z.object({
@@ -256,10 +257,9 @@ class LineItemClassifier {
     }
 
     // Step 10: Infer taxability from LLM category assignments (NM rules)
-    const taxExemptCategories = /^(groceries|medical|health|pharmacy|prescription)/i;
     const inferredTaxable = resolved.map((r) => {
       if (!r.suggestedCategoryName) return null;
-      return !taxExemptCategories.test(r.suggestedCategoryName);
+      return !this.store.isCategoryTaxExempt(r.suggestedCategoryName);
     });
 
     // If all items are tax-exempt but receipt has tax, something is
@@ -356,71 +356,9 @@ class LineItemClassifier {
   // Tax Reconciliation (after fallback may change categories)
   // ---------------------------------------------------------------------------
 
-  private reconcileTax(matchId: string, receipt: ReceiptDocument): void {
-    const classifications = this.store.getClassificationsForMatch(matchId);
-    const taxExemptCategories = /^(groceries|medical|health|pharmacy|prescription)/i;
-
-    const inferredTaxable = classifications.map((c) => {
-      const name = c.suggestedCategoryName as string | null;
-      if (!name) return null;
-      return !taxExemptCategories.test(name);
-    });
-
-    const hasAnyTaxable = inferredTaxable.some((t) => t === true);
-    const taxableFlags = (receipt.taxAmount !== 0 && !hasAnyTaxable)
-      ? classifications.map(() => null)
-      : inferredTaxable;
-
-    console.log(`[reconcileTax] match=${matchId} items=${classifications.length} hasAnyTaxable=${hasAnyTaxable}`);
-    for (let i = 0; i < classifications.length; i++) {
-      const c = classifications[i];
-      console.log(`[reconcileTax]   [${i}] "${c.suggestedCategoryName}" old: taxable=${c.taxable} tax=${c.allocatedTax} → new: taxable=${taxableFlags[i]}`);
-    }
-
-    const taxInput = {
-      lineItems: classifications.map((c, i) => ({
-        totalPrice: c.totalPrice as number,
-        taxable: taxableFlags[i],
-      })),
-      totalTax: receipt.taxAmount,
-    };
-    const taxResult = allocateTax(taxInput);
-
-    const lineItemAmounts = taxResult.allocations.map((a) => a.amountWithTax);
-    const additionalChargesTotal = (receipt.tipAmount ?? 0) + (receipt.shippingAmount ?? 0);
-    const balance = validateReceiptBalance(
-      lineItemAmounts, additionalChargesTotal, receipt.totalAmount,
-    );
-
-    if (!balance.balanced) {
-      let largestIdx = 0;
-      let largestAbs = 0;
-      for (let i = 0; i < lineItemAmounts.length; i++) {
-        const abs = Math.abs(lineItemAmounts[i]);
-        if (abs > largestAbs) { largestAbs = abs; largestIdx = i; }
-      }
-      taxResult.allocations[largestIdx].amountWithTax += balance.discrepancy;
-      taxResult.allocations[largestIdx].allocatedTax += balance.discrepancy;
-    }
-
-    // Update stored classifications with corrected tax
-    let updated = 0;
-    for (let i = 0; i < classifications.length; i++) {
-      const c = classifications[i];
-      const alloc = taxResult.allocations[i];
-      if (c.allocatedTax !== alloc.allocatedTax
-        || c.amountWithTax !== alloc.amountWithTax) {
-        const ok = this.store.updateLineItemClassification(c.id as string, {
-          allocatedTax: alloc.allocatedTax,
-          amountWithTax: alloc.amountWithTax,
-          taxable: taxableFlags[i],
-        });
-        console.log(`[reconcileTax]   [${i}] update id=${c.id} tax ${c.allocatedTax}→${alloc.allocatedTax} total ${c.amountWithTax}→${alloc.amountWithTax} taxable=${taxableFlags[i]} ok=${ok}`);
-        updated++;
-      }
-    }
-
-    console.log(`Tax reconciled for match ${matchId} after fallback (${updated} items updated)`);
+  private reconcileTax(matchId: string, _receipt: ReceiptDocument): void {
+    reconcileMatchTax(this.store, matchId);
+    console.log(`Tax reconciled for match ${matchId} after fallback`);
   }
 
   // ---------------------------------------------------------------------------
