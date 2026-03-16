@@ -647,6 +647,49 @@ whose existing Actual Budget category is already correct.
 
 ---
 
+## Phase 7.7: Veryfi Profile Switching ✅ COMPLETE
+
+Support for switching between Veryfi account profiles (business, personal, farm)
+so receipts can be fetched from the correct profile.
+
+**Commit**: `dc4de33+` (feature/matching-algorithm-redesign branch)
+
+### 7.7.1 — TypeScript Client Profile Support
+
+- [x] `VeryfiProfile` interface in `types.ts`
+- [x] `switchProfile()` function in `auth.ts` (GET profile switch URL, scrape new credentials)
+- [x] `getProfiles()`, `resolveProfile()`, `switchProfile()` methods in `client.ts`
+- [x] Profile resolution: exact username, account ID, or company name substring
+- [x] Cached profile list with optional refresh
+- [x] Active profile tracking
+
+### 7.7.2 — Adapter Integration
+
+- [x] `VeryfiAdapter` accepts optional `profile` parameter
+- [x] Profile switch happens after auth in `ensureClient()` (before any API calls)
+- [x] `getClient()` method exposed for profile listing from external code
+
+### 7.7.3 — Configuration & API
+
+- [x] `VERYFI_PROFILE` env var in `config.ts` (empty = default/primary profile)
+- [x] `container.ts` passes profile to `VeryfiAdapter`
+- [x] `GET /api/veryfi/profiles` endpoint in `server.ts` for UI profile listing
+- [x] `getVeryfiProfiles` callback in `app.ts`
+
+### 7.7.4 — Known Profiles
+
+| Profile | Receipts | Type |
+|---------|----------|------|
+| Exact Technology Partners (primary) | 451 | business |
+| Personal - Mortensen Family | 587 | personal |
+| Farm - Doug & Elise Mortensen's | 67 | personal |
+
+**Files modified**: `src/veryfi/types.ts`, `src/veryfi/auth.ts`, `src/veryfi/client.ts`,
+`src/veryfi/index.ts`, `src/receipt/veryfi-adapter.ts`, `src/config.ts`, `src/container.ts`,
+`src/web/server.ts`, `app.ts`
+
+---
+
 ## Phase 8: Live Testing & Verification ⬜ IN PROGRESS
 
 Test the full pipeline with real data before production deployment.
@@ -780,6 +823,10 @@ Phases 1-5.5 ✅ COMPLETE
      ├── Phase 7.6: Transaction Details & Keep-Category ✅
      |     (queue payee/date/category columns, bulk lookup,
      |      keep-category action, unmatch guard relaxation)
+     |
+     ├── Phase 7.7: Veryfi Profile Switching ✅
+     |     (multi-profile support, profile selection via env var,
+     |      profile listing API endpoint)
      |
      └── Phase 8: Live Testing ⬜ IN PROGRESS
            (partially verified — apply, category editing, keep-category confirmed)

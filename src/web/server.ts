@@ -33,6 +33,14 @@ export interface WebServerDeps {
   onBatchUnmatch?: (request: BatchRequest) => BatchResponse;
   onBatchReject?: (request: BatchRequest) => BatchResponse;
   onBatchReclassify?: (request: BatchRequest) => Promise<BatchResponse>;
+  getVeryfiProfiles?: () => Promise<Array<{
+    username: string;
+    companyName: string;
+    accountId: number;
+    isPrimary: boolean;
+    type: string;
+    displayType: string;
+  }>>;
   onResetAndRematch?: () => Promise<{
     reset: number;
     preserved: number;
@@ -290,6 +298,20 @@ export function createWebServer(deps: WebServerDeps): express.Express {
 
     app.get('/api/receipt-stats', (_req: Request, res: Response) => {
       res.json(receiptStore.getStats());
+    });
+
+    app.get('/api/veryfi/profiles', async (_req: Request, res: Response) => {
+      if (!deps.getVeryfiProfiles) {
+        res.status(501).json({ error: 'Veryfi profiles not configured' });
+        return;
+      }
+      try {
+        const profiles = await deps.getVeryfiProfiles();
+        res.json({ profiles });
+      } catch (error) {
+        console.error('Error fetching Veryfi profiles:', error);
+        res.status(500).json({ error: 'Failed to fetch Veryfi profiles' });
+      }
     });
 
     // Write endpoints for receipt operations

@@ -227,6 +227,22 @@ if (REVIEW_UI_ENABLED) {
     receiptStore: isFeatureEnabled('receiptMatching') ? receiptStore : undefined,
     connectorRegistry: isFeatureEnabled('receiptMatching') ? connectorRegistry : undefined,
 
+    getVeryfiProfiles: isFeatureEnabled('receiptMatching') && connectorRegistry.get('veryfi')
+      ? async () => {
+        const adapter = connectorRegistry.get('veryfi') as import('./src/receipt/veryfi-adapter').default;
+        const client = await adapter.getClient();
+        const profiles = await client.getProfiles();
+        return profiles.map((p) => ({
+          username: p.username,
+          companyName: p.companyName,
+          accountId: p.accountId,
+          isPrimary: p.isPrimary,
+          type: p.type,
+          displayType: p.displayType,
+        }));
+      }
+      : undefined,
+
     onReceiptFetch: isFeatureEnabled('receiptMatching')
       ? () => receiptFetchService.fetchAll()
       : undefined,

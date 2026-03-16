@@ -49,6 +49,7 @@ import {
   valueSerpApiKey,
   veryfiUsername,
   veryfiPassword,
+  veryfiProfile,
   veryfiTotpSecret,
 } from './config';
 import ActualAiService from './actual-ai';
@@ -190,7 +191,12 @@ const receiptStore = new ReceiptStore(dataDir);
 const connectorRegistry = new ConnectorRegistry();
 
 if (receiptConnectors.includes('veryfi') && veryfiUsername && veryfiTotpSecret) {
-  connectorRegistry.register(new VeryfiAdapter(veryfiUsername, veryfiPassword, veryfiTotpSecret));
+  connectorRegistry.register(new VeryfiAdapter(
+    veryfiUsername,
+    veryfiPassword,
+    veryfiTotpSecret,
+    veryfiProfile || undefined,
+  ));
 }
 
 const receiptFetchService = new ReceiptFetchService(

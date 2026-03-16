@@ -246,6 +246,37 @@ class VeryfiConnector implements ReceiptConnector {
 - `stamp_date` can be 30+ days before `created` (batch uploads of old
   receipts). Maximum gap in corpus: 723 days. This is expected.
 
+#### 3.3.1 Veryfi Profile Switching
+
+Veryfi accounts can have multiple profiles (business accounts, personal, farm,
+etc.). Each profile has its own set of receipts. The adapter supports selecting
+which profile to fetch receipts from.
+
+**Profile discovery**: `GET /accounts/` on the internal API returns all profiles
+with `username`, `api_key`, `company_name`, `id`, `is_primary`, `type`, and
+`display_type` fields.
+
+**Profile switch mechanism**: `GET https://app.veryfi.com/me/profile/switch/{username}/{api_key}/`
+using cookies from the authenticated session. The response is an HTML dashboard
+page; new `client_id` and `veryfi_session` credentials are scraped from embedded
+JavaScript (`IQBOXY.API_CLIENT_ID` and `IQBOXY.API.init`).
+
+**Profile resolution**: Profiles can be identified by exact username, numeric
+account ID, or case-insensitive company name substring. Ambiguous substring
+matches (multiple results) produce an error with available options listed.
+
+**Configuration**: `VERYFI_PROFILE` env var specifies which profile to use.
+If empty/unset, the default (primary) profile is used. The Review UI exposes
+a `GET /api/veryfi/profiles` endpoint for listing available profiles.
+
+**Known profiles** (from production account):
+
+| Profile | Username | Receipts | Type |
+|---------|----------|----------|------|
+| Exact Technology Partners | (primary) | 451 | business |
+| Personal - Mortensen Family | dougmortensen-personal | 587 | personal |
+| Farm - Doug & Elise Mortensen's | dougmortensen-farm | 67 | personal |
+
 ### 3.4 Component Diagram
 
 ```
@@ -1181,6 +1212,7 @@ only those items fall back to the generalized approach.
 | `VERYFI_USERNAME` | `""` | Veryfi account username (email) |
 | `VERYFI_PASSWORD` | `""` | Veryfi account password |
 | `VERYFI_TOTP_SECRET` | `""` | Base32-encoded TOTP secret for Veryfi MFA |
+| `VERYFI_PROFILE` | `""` | Veryfi profile to use (username, company name substring, or account ID). Empty = primary/default profile. |
 | `RECEIPT_MATCH_TOLERANCE_CENTS` | `5` | Amount tolerance for matching (in cents) |
 | `RECEIPT_DATE_TOLERANCE_DAYS` | `1` | Date tolerance for matching (in days) |
 | `RECEIPT_AUTO_MATCH` | `true` | Auto-confirm exact matches without user review |

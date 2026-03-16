@@ -46,6 +46,7 @@ export const receiptConnectors = (process.env.RECEIPT_CONNECTORS ?? '').split(',
 export const veryfiUsername = process.env.VERYFI_USERNAME ?? '';
 export const veryfiPassword = process.env.VERYFI_PASSWORD ?? '';
 export const veryfiTotpSecret = process.env.VERYFI_TOTP_SECRET ?? '';
+export const veryfiProfile = process.env.VERYFI_PROFILE ?? '';
 export const receiptMatchToleranceCents = Number.parseInt(process.env.RECEIPT_MATCH_TOLERANCE_CENTS ?? '5', 10);
 export const receiptDateToleranceDays = Number.parseInt(process.env.RECEIPT_DATE_TOLERANCE_DAYS ?? '1', 10);
 export const receiptStructuralToleranceDays = Number.parseInt(process.env.RECEIPT_STRUCTURAL_TOLERANCE_DAYS ?? '3', 10);

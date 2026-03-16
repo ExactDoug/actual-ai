@@ -183,6 +183,19 @@ export interface VeryfiReceipt {
   [key: string]: unknown;
 }
 
+// ── Profiles ───────────────────────────────────────────────────────
+
+export interface VeryfiProfile {
+  username: string;          // used for profile switching
+  apiKey: string;            // used for profile switching
+  companyName: string;       // human-readable profile name
+  accountId: number;         // numeric account ID
+  companyId?: number;        // numeric company ID
+  isPrimary: boolean;        // whether this is the default profile
+  type: string;              // 'business' or 'personal'
+  displayType: string;       // 'BUSINESS' or 'PERSONAL'
+}
+
 // ── Receipt query filters ───────────────────────────────────────────
 
 export interface VeryfiReceiptFilters {

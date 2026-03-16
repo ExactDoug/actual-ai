@@ -123,6 +123,7 @@ Branch is pushed to remote. PR #2 is open against `master`.
 | `VERYFI_USERNAME` | configured |
 | `VERYFI_PASSWORD` | configured |
 | `VERYFI_TOTP_SECRET` | configured |
+| `VERYFI_PROFILE` | (not set — needs to be configured for correct profile) |
 
 ### First Production Run Results
 
@@ -371,6 +372,15 @@ matching the pattern used by other web UI callbacks (e.g., `onApply`, `getCatego
 `approveAll()` / `rejectAll()` called `location.reload()` which reset all UI state.
 **Fix**: Changed animation to `infinite`, made approve/reject functions update badges inline
 instead of reloading, added auto-pulse on page load when any items are already approved.
+
+### OPEN: Receipts from wrong Veryfi profile
+
+**Severity**: Medium — all 27 receipts currently in the database were fetched
+from the default (primary) profile (Exact Technology Partners / business).
+Personal receipts are in a different profile (Personal - Mortensen Family, 587
+receipts). The `VERYFI_PROFILE` env var must be set on the container to fetch
+from the correct profile. Existing receipts from the wrong profile will need
+to be purged and re-fetched.
 
 ### OPEN: LLM classification accuracy for ambiguous items
 
