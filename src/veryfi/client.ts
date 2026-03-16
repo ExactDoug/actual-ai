@@ -267,6 +267,7 @@ export class VeryfiClient {
     if (filters.category) params.category = filters.category;
     if (filters.documentType) params.document_type = filters.documentType;
     if (filters.accountingEntryType) params.accounting_entry_type = filters.accountingEntryType;
+    if (filters.updatedSince) params.updated_since = filters.updatedSince;
 
     const { items, meta } = await this.paginate<Record<string, unknown>>(
       '/receipts/',
@@ -336,6 +337,32 @@ export class VeryfiClient {
   async getCurrencies(): Promise<Record<string, unknown>[]> {
     const data = await this.get('/currencies/');
     return (data.currencies ?? []) as Record<string, unknown>[];
+  }
+
+  // ── Incremental sync helpers ───────────────────────────────────
+
+  /** Get the total receipt count cheaply (single API call, page_size=1). */
+  async getReceiptCount(filters: VeryfiReceiptFilters = {}): Promise<{ count: number; meta: VeryfiMeta }> {
+    const { meta } = await this.getReceipts({
+      ...filters,
+      pageSize: 1,
+      maxPages: 1,
+      orderby: '-created',
+    });
+    return { count: meta.total_results ?? 0, meta };
+  }
+
+  /** Fetch receipts created or modified since a given timestamp.
+   *  Convenience wrapper for incremental sync workflows. */
+  async getChangesSince(
+    timestamp: string,
+    status = 'processed,reviewed,archived',
+  ): Promise<{ receipts: VeryfiReceipt[]; meta: VeryfiMeta }> {
+    return this.getReceipts({
+      updatedSince: timestamp,
+      orderby: '-updated',
+      status,
+    });
   }
 
   // ── Accounts ────────────────────────────────────────────────────

@@ -209,7 +209,8 @@ export interface VeryfiReceiptFilters {
   category?: string;          // exact category name, case-sensitive
   documentType?: string;      // receipt | invoice
   accountingEntryType?: string; // debit | credit
-  orderby?: string;           // created, stamp_date, total (prefix - for desc)
+  updatedSince?: string;       // YYYY-MM-DD or YYYY-MM-DD HH:MM:SS — incremental sync filter
+  orderby?: string;           // created, stamp_date, total, updated (prefix - for desc)
   pageSize?: number;          // default 50, server accepts up to ~500
   maxPages?: number;          // stop after N pages (undefined = all)
 }

@@ -121,19 +121,25 @@ class VeryfiAdapter implements ReceiptConnector {
 
   // ── ReceiptConnector interface ────────────────────────────────────
 
-  async fetchReceipts(since: Date): Promise<{
+  async fetchReceipts(since: Date, updatedSince?: string): Promise<{
     receipts: ReceiptDocument[];
     errors: Array<{ message: string; context?: unknown }>;
   }> {
     const client = await this.ensureClient();
 
-    const startDate = since.toISOString().split('T')[0]; // YYYY-MM-DD
-
-    const { receipts: veryfiReceipts } = await client.getReceipts({
-      startDate,
-      dateType: 'created',
-      orderby: '-created',
-    });
+    let veryfiReceipts;
+    if (updatedSince) {
+      // Incremental sync: fetch only new/modified receipts since last sync
+      const result = await client.getChangesSince(updatedSince);
+      veryfiReceipts = result.receipts;
+    } else {
+      // Full sync: fetch all receipts (no date filter)
+      const result = await client.getReceipts({
+        status: 'processed,reviewed,archived',
+        orderby: '-created',
+      });
+      veryfiReceipts = result.receipts;
+    }
 
     const receipts: ReceiptDocument[] = [];
     const errors: Array<{ message: string; context?: unknown }> = [];

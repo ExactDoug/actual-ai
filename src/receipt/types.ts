@@ -89,7 +89,7 @@ export interface SplitPlan {
 
 export interface ReceiptConnector {
   readonly providerId: string;
-  fetchReceipts(since: Date): Promise<{
+  fetchReceipts(since: Date, updatedSince?: string): Promise<{
     receipts: ReceiptDocument[];
     errors: Array<{ message: string; context?: unknown }>;
   }>;
