@@ -93,7 +93,9 @@ function layout(title: string, content: string, activeNav: string): string {
     <a href="/receipts/dashboard">Receipts</a>
     <a href="/receipts">Queue</a>
     <span class="spacer"></span>
+    <a href="/classifications?status=pending" id="pendingBadge" style="font-size:0.75rem;color:#fbbf24;background:#78350f;padding:0.15rem 0.5rem;border-radius:10px;text-decoration:none;display:none;" title="Pending classifications"></a>
     <span id="cronToggle" title="Click to toggle cron job" style="cursor:pointer;font-size:0.8rem;color:#888;padding:0.2rem 0.5rem;border:1px solid #3a3d52;border-radius:4px;user-select:none;">Cron: ...</span>
+    <a href="/settings" style="font-size:0.85rem;color:#888;margin-left:0.3rem;" title="Automation Settings">&#9881;</a>
     <a href="/logout" class="logout">Logout</a>
   </nav>
   <div class="container">
@@ -122,6 +124,21 @@ function layout(title: string, content: string, activeNav: string): string {
         update(d.enabled);
       }).catch(function() { el.textContent = 'Cron: error'; });
     });
+  })();
+  // Pending classification count badge
+  (function() {
+    fetch('/api/stats').then(function(r) { return r.json(); }).then(function(d) {
+      var badge = document.getElementById('pendingBadge');
+      if (!badge) return;
+      var parts = [];
+      if (d.totalPending > 0) parts.push(d.totalPending + ' pending');
+      if (d.failedWrites > 0) parts.push(d.failedWrites + ' failed');
+      if (parts.length > 0) {
+        badge.textContent = parts.join(' | ');
+        if (d.failedWrites > 0) { badge.style.background = '#7f1d1d'; badge.style.color = '#f87171'; }
+        badge.style.display = 'inline-block';
+      }
+    }).catch(function() {});
   })();
   </script>
 </body>

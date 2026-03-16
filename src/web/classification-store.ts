@@ -100,6 +100,12 @@ class ClassificationStore {
       CREATE INDEX IF NOT EXISTS idx_classifications_runId ON classifications(runId);
       CREATE INDEX IF NOT EXISTS idx_classifications_transactionId ON classifications(transactionId);
     `);
+
+    // Migration: add writeError column if it doesn't exist
+    const cols = this.db.prepare("PRAGMA table_info(classifications)").all() as { name: string }[];
+    if (!cols.some((c) => c.name === 'writeError')) {
+      this.db.exec('ALTER TABLE classifications ADD COLUMN writeError TEXT');
+    }
   }
 
   insert(record: Omit<ClassificationRecord, 'id' | 'status' | 'reviewedAt' | 'appliedAt'>): string {
@@ -298,6 +304,36 @@ class ClassificationStore {
 
   clearPendingForTransaction(transactionId: string): void {
     this.db.prepare("DELETE FROM classifications WHERE transactionId = ? AND status = 'pending'").run(transactionId);
+  }
+
+  setWriteError(id: string, error: string): void {
+    this.db.prepare('UPDATE classifications SET writeError = ? WHERE id = ?').run(error, id);
+  }
+
+  clearWriteError(id: string): void {
+    this.db.prepare('UPDATE classifications SET writeError = NULL WHERE id = ?').run(id);
+  }
+
+  getFailedWrites(): ClassificationRecord[] {
+    return this.db.prepare(
+      "SELECT * FROM classifications WHERE status = 'approved' AND writeError IS NOT NULL ORDER BY classifiedAt DESC",
+    ).all() as ClassificationRecord[];
+  }
+
+  getFailedWriteCount(): number {
+    const row = this.db.prepare(
+      "SELECT COUNT(*) as count FROM classifications WHERE status = 'approved' AND writeError IS NOT NULL",
+    ).get() as { count: number };
+    return row.count;
+  }
+
+  /** Get transaction IDs that already have a non-rejected classification.
+   *  Used to skip re-classifying transactions that already have a result. */
+  getClassifiedTransactionIds(): Set<string> {
+    const rows = this.db.prepare(
+      "SELECT DISTINCT transactionId FROM classifications WHERE status != 'rejected'",
+    ).all() as { transactionId: string }[];
+    return new Set(rows.map((r) => r.transactionId));
   }
 
   close(): void {

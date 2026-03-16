@@ -27,6 +27,7 @@ class TransactionFilterer {
   public filterUncategorized(
     transactions: TransactionEntity[],
     accounts: APIAccountEntity[],
+    alreadyClassifiedIds?: Set<string>,
   ): TransactionEntity[] {
     console.log(`All transactions count: ${transactions.length}`);
     console.log(`All accounts: ${accounts.length}`);
@@ -80,6 +81,14 @@ class TransactionFilterer {
       (transaction) => !accountsToSkip.includes(transaction.account),
       'Account is not budget',
     );
+
+    if (alreadyClassifiedIds && alreadyClassifiedIds.size > 0) {
+      filteredTransactions = this.applyFilter(
+        filteredTransactions,
+        (transaction) => !alreadyClassifiedIds.has(transaction.id),
+        'Already classified (pending/approved/applied in classifications.db)',
+      );
+    }
 
     console.log(`Found ${filteredTransactions.length} uncategorized transactions`);
 

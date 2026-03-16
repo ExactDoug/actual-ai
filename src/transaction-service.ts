@@ -9,6 +9,7 @@ import { isFeatureEnabled } from './config';
 import CategorySuggester from './transaction/category-suggester';
 import BatchTransactionProcessor from './transaction/batch-transaction-processor';
 import TransactionFilterer from './transaction/transaction-filterer';
+import ClassificationStore from './web/classification-store';
 
 class TransactionService implements TransactionServiceI {
   private readonly actualApiService: ActualApiServiceI;
@@ -21,18 +22,22 @@ class TransactionService implements TransactionServiceI {
 
   private readonly isDryRun: boolean;
 
+  private readonly classificationStore?: ClassificationStore;
+
   constructor(
     actualApiClient: ActualApiServiceI,
     categorySuggester: CategorySuggester,
     transactionProcessor: BatchTransactionProcessor,
     transactionFilterer: TransactionFilterer,
     isDryRun: boolean,
+    classificationStore?: ClassificationStore,
   ) {
     this.actualApiService = actualApiClient;
     this.categorySuggester = categorySuggester;
     this.transactionProcessor = transactionProcessor;
     this.transactionFilterer = transactionFilterer;
     this.isDryRun = isDryRun;
+    this.classificationStore = classificationStore;
   }
 
   async processTransactions(): Promise<void> {
@@ -53,9 +58,15 @@ class TransactionService implements TransactionServiceI {
     console.log(`Found ${rules.length} transaction categorization rules`);
     console.log('rerunMissedTransactions', isFeatureEnabled('rerunMissedTransactions'));
 
+    const alreadyClassifiedIds = this.classificationStore?.getClassifiedTransactionIds();
+    if (alreadyClassifiedIds?.size) {
+      console.log(`Skipping ${alreadyClassifiedIds.size} already-classified transactions`);
+    }
+
     const uncategorizedTransactions = this.transactionFilterer.filterUncategorized(
       transactions,
       accounts,
+      alreadyClassifiedIds,
     );
 
     if (uncategorizedTransactions.length === 0) {

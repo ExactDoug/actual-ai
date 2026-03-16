@@ -76,6 +76,7 @@ import MatchingService from './receipt/matching-service';
 import LineItemClassifier from './receipt/line-item-classifier';
 import SplitTransactionService from './receipt/split-transaction-service';
 import BatchService from './receipt/batch-service';
+import ClassificationStore from './web/classification-store';
 
 // Create tool service if API key is available and tools are enabled
 export function createToolService(): ToolService | undefined {
@@ -167,12 +168,15 @@ const batchTransactionProcessor = new BatchTransactionProcessor(
 
 const transactionFilterer = new TransactionFilterer(tagService);
 
+const classificationStore = new ClassificationStore(dataDir);
+
 const transactionService = new TransactionService(
   actualApiService,
   categorySuggester,
   batchTransactionProcessor,
   transactionFilterer,
   isDryRun,
+  classificationStore,
 );
 
 const notesMigrator = new NotesMigrator(
@@ -239,6 +243,7 @@ const batchService = new BatchService(
 
 export {
   transactionProcessor,
+  classificationStore,
   receiptStore,
   connectorRegistry,
   receiptFetchService,

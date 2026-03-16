@@ -891,6 +891,85 @@ export function renderReceiptDashboard(stats: {
   return receiptLayout('Receipt Dashboard', content, 'dashboard');
 }
 
+export function renderSettings(): string {
+  const settingsDef = [
+    { key: 'cron.enabled', label: 'Master Cron Toggle', desc: 'Enable/disable all automated cron tasks' },
+    { key: 'cron.autoFetchReceipts', label: 'Auto-Fetch Receipts', desc: 'Fetch new receipts from Veryfi on each cron run' },
+    { key: 'cron.autoMatchReceipts', label: 'Auto-Match Receipts', desc: 'Match fetched receipts to Actual Budget transactions' },
+    { key: 'cron.autoClassifyTransactions', label: 'Auto-Classify Transactions', desc: 'Run LLM classifier on uncategorized transactions (uses LLM tokens)' },
+    { key: 'cron.autoClassifyLineItems', label: 'Auto-Classify Line Items', desc: 'Run LLM line-item classifier on matched receipts (expensive — uses many LLM tokens)' },
+    { key: 'cron.autoApplyHighConfidence', label: 'Auto-Apply High Confidence', desc: 'Automatically apply high-confidence classifications to Actual Budget without manual review' },
+  ];
+
+  const content = `
+    <h1 style="font-size: 1.3rem; margin-bottom: 1.5rem;">Automation Settings</h1>
+    <div class="card">
+      <h2>Cron Job Automation</h2>
+      <p style="color:#888;font-size:0.85rem;margin-bottom:1rem;">
+        Control which steps run automatically on the cron schedule.
+        Changes take effect immediately and persist across container restarts.
+      </p>
+      <div id="settingsForm">
+        ${settingsDef.map((s) => `
+        <div style="display:flex;align-items:center;gap:1rem;padding:0.7rem 0;border-bottom:1px solid #2a2d40;">
+          <label style="position:relative;width:44px;height:24px;flex-shrink:0;">
+            <input type="checkbox" data-key="${s.key}" style="opacity:0;width:0;height:0;" onchange="toggleSetting(this)">
+            <span class="toggle-slider"></span>
+          </label>
+          <div>
+            <div style="font-weight:600;font-size:0.9rem;">${s.label}</div>
+            <div style="color:#888;font-size:0.8rem;">${s.desc}</div>
+          </div>
+        </div>`).join('')}
+      </div>
+    </div>
+
+    <style>
+      .toggle-slider {
+        position:absolute;top:0;left:0;right:0;bottom:0;
+        background:#3a3d52;border-radius:12px;cursor:pointer;
+        transition: background 0.2s;
+      }
+      .toggle-slider:before {
+        content:'';position:absolute;height:18px;width:18px;left:3px;bottom:3px;
+        background:#888;border-radius:50%;transition: transform 0.2s, background 0.2s;
+      }
+      input:checked + .toggle-slider { background:#166534; }
+      input:checked + .toggle-slider:before { transform:translateX(20px);background:#4ade80; }
+    </style>
+
+    <script>
+      (async function() {
+        try {
+          var res = await fetch('/api/settings');
+          var settings = await res.json();
+          document.querySelectorAll('#settingsForm input[data-key]').forEach(function(cb) {
+            cb.checked = settings[cb.dataset.key] === 'true';
+          });
+        } catch(e) { console.error('Failed to load settings', e); }
+      })();
+
+      async function toggleSetting(cb) {
+        var key = cb.dataset.key;
+        var value = cb.checked ? 'true' : 'false';
+        try {
+          var body = {};
+          body[key] = value;
+          await fetch('/api/settings', {
+            method: 'PATCH',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(body)
+          });
+        } catch(e) {
+          cb.checked = !cb.checked; // revert on error
+          console.error('Failed to save setting', e);
+        }
+      }
+    </script>
+  `;
+  return receiptLayout('Automation Settings', content, '');
+}
+
 // ---------------------------------------------------------------------------
 // Shared layout and helpers
 // ---------------------------------------------------------------------------
@@ -1017,7 +1096,9 @@ function receiptLayout(title: string, content: string, activeNav: string): strin
     <a href="/receipts" class="${activeNav === 'queue' ? 'active' : ''}">Queue</a>
     <a href="/receipts/unmatched" class="${activeNav === 'unmatched' ? 'active' : ''}">Unmatched</a>
     <span class="spacer"></span>
+    <a href="/classifications?status=pending" id="pendingBadge" style="font-size:0.75rem;color:#fbbf24;background:#78350f;padding:0.15rem 0.5rem;border-radius:10px;text-decoration:none;display:none;" title="Pending classifications"></a>
     <span id="cronToggle" title="Click to toggle cron job" style="cursor:pointer;font-size:0.8rem;color:#888;padding:0.2rem 0.5rem;border:1px solid #3a3d52;border-radius:4px;user-select:none;">Cron: ...</span>
+    <a href="/settings" style="font-size:0.85rem;color:#888;margin-left:0.3rem;" title="Automation Settings">&#9881;</a>
     <a href="/logout" class="logout">Logout</a>
   </nav>
   <div class="container">
@@ -1046,6 +1127,21 @@ function receiptLayout(title: string, content: string, activeNav: string): strin
         update(d.enabled);
       }).catch(function() { el.textContent = 'Cron: error'; });
     });
+  })();
+  // Pending classification count badge
+  (function() {
+    fetch('/api/stats').then(function(r) { return r.json(); }).then(function(d) {
+      var badge = document.getElementById('pendingBadge');
+      if (!badge) return;
+      var parts = [];
+      if (d.totalPending > 0) parts.push(d.totalPending + ' pending');
+      if (d.failedWrites > 0) parts.push(d.failedWrites + ' failed');
+      if (parts.length > 0) {
+        badge.textContent = parts.join(' | ');
+        if (d.failedWrites > 0) { badge.style.background = '#7f1d1d'; badge.style.color = '#f87171'; }
+        badge.style.display = 'inline-block';
+      }
+    }).catch(function() {});
   })();
   </script>
 </body>
